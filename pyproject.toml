@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ctf-mcp"
+version = "0.1.0"
+description = "MCP Server for CTF Challenges - Crypto, Web, Pwn, Reverse, Forensics, Misc"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Coff0xc"}
+]
+keywords = ["ctf", "mcp", "security", "hacking", "cryptography"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+]
+
+dependencies = [
+    "mcp>=1.0.0",
+    "pycryptodome>=3.20.0",
+    "requests>=2.31.0",
+    "pwntools>=4.11.0",
+    "capstone>=5.0.0",
+    "python-magic>=0.4.27",
+    "Pillow>=10.0.0",
+    "numpy>=1.24.0",
+    "sympy>=1.12",
+    "gmpy2>=2.1.5",
+    "z3-solver>=4.12.0",
+    "angr>=9.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+ctf-mcp = "ctf_mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/Coff0xc/CTF-MCP"
+Repository = "https://github.com/Coff0xc/CTF-MCP"
+Issues = "https://github.com/Coff0xc/CTF-MCP/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ctf_mcp*"]
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I"]
