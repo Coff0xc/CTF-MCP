@@ -14,6 +14,8 @@ import struct
 import zlib
 from typing import Optional, List, Dict, Union
 
+from ..utils.security import dangerous_operation, RiskLevel
+
 
 class WebTools:
     """Web security tools for CTF challenges"""
@@ -330,6 +332,10 @@ class WebTools:
 
     # === SSTI ===
 
+    @dangerous_operation(
+        risk_level=RiskLevel.CRITICAL,
+        description="Server-Side Template Injection (SSTI) payloads can execute arbitrary code on the server"
+    )
     def ssti_payloads(self, engine: str = "auto") -> str:
         """Generate Server-Side Template Injection payloads"""
         payloads = {
@@ -626,6 +632,10 @@ token = jwt.encode(payload, public_key, algorithm='HS256')
         serialized = serialize_value(data)
         return f"PHP Serialized: {serialized}"
 
+    @dangerous_operation(
+        risk_level=RiskLevel.CRITICAL,
+        description="Python pickle deserialization can execute arbitrary code (RCE)"
+    )
     def pickle_payload(self) -> str:
         """Generate Python pickle RCE payload templates"""
         payloads = [
@@ -780,6 +790,10 @@ $phar->stopBuffering();
 
         return '\n'.join(result)
 
+    @dangerous_operation(
+        risk_level=RiskLevel.CRITICAL,
+        description="Node.js deserialization can execute arbitrary code (RCE)"
+    )
     def nodejs_deserialize(self) -> str:
         """Node.js deserialization payloads"""
         payloads = {
@@ -814,6 +828,10 @@ $phar->stopBuffering();
 
         return '\n'.join(result)
 
+    @dangerous_operation(
+        risk_level=RiskLevel.CRITICAL,
+        description="YAML deserialization can execute arbitrary code (RCE)"
+    )
     def yaml_deserialize(self, library: str = "all") -> str:
         """YAML deserialization payloads"""
         payloads = {
@@ -858,6 +876,10 @@ $phar->stopBuffering();
 
     # === Command Injection ===
 
+    @dangerous_operation(
+        risk_level=RiskLevel.CRITICAL,
+        description="Command injection payloads can execute arbitrary OS commands"
+    )
     def cmd_injection(self, os_type: str = "linux", context: str = "basic") -> str:
         """OS command injection payloads"""
         linux_payloads = {

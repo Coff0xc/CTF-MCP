@@ -8,6 +8,27 @@
 
 A Model Context Protocol (MCP) server providing comprehensive tools for CTF (Capture The Flag) challenges.
 
+## ⚠️ Security Warning
+
+**IMPORTANT: This tool is designed for authorized security testing only.**
+
+- ✅ **Authorized Use**: CTF competitions, penetration testing with written permission, security research, educational purposes
+- ❌ **Prohibited Use**: Unauthorized access, malicious attacks, illegal activities
+
+**Before using this tool:**
+1. Ensure you have proper authorization
+2. Read [SECURITY.md](SECURITY.md) for detailed security guidelines
+3. Review [BEST_PRACTICES.md](BEST_PRACTICES.md) for usage recommendations
+4. Understand the risk levels of tools you plan to use
+
+**Risk Levels:**
+- 🟢 LOW: Information gathering (safe)
+- 🟡 MEDIUM: Vulnerability detection (requires authorization)
+- 🟠 HIGH: Exploitation tools (explicit authorization required)
+- 🔴 CRITICAL: RCE/Deserialization payloads (written authorization required)
+
+**By using CTF-MCP, you agree to use it responsibly and legally.**
+
 ### Features
 
 #### Crypto (53 tools)
@@ -110,6 +131,27 @@ Add to your MCP client configuration:
 ## 中文
 
 一个为 CTF（夺旗赛）挑战提供全面工具的 MCP（模型上下文协议）服务器。
+
+## ⚠️ 安全警告
+
+**重要提示：本工具仅用于授权的安全测试。**
+
+- ✅ **授权使用**：CTF 竞赛、获得书面许可的渗透测试、安全研究、教育目的
+- ❌ **禁止使用**：未经授权的访问、恶意攻击、非法活动
+
+**使用本工具前：**
+1. 确保您已获得适当的授权
+2. 阅读 [SECURITY.md](SECURITY.md) 了解详细的安全指南
+3. 查看 [BEST_PRACTICES.md](BEST_PRACTICES.md) 了解使用建议
+4. 了解您计划使用的工具的风险级别
+
+**风险级别：**
+- 🟢 低风险：信息收集（安全）
+- 🟡 中风险：漏洞检测（需要授权）
+- 🟠 高风险：漏洞利用工具（需要明确授权）
+- 🔴 严重风险：RCE/反序列化 payload（需要书面授权）
+
+**使用 CTF-MCP 即表示您同意负责任且合法地使用它。**
 
 ### 功能特性
 
