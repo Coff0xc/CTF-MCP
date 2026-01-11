@@ -581,138 +581,18 @@ async def list_tools() -> list[Tool]:
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Handle tool calls"""
     try:
-        # Crypto tools
-        if name == "crypto_base64_encode":
-            result = crypto_tools.base64_encode(arguments["data"])
-        elif name == "crypto_base64_decode":
-            result = crypto_tools.base64_decode(arguments["data"])
-        elif name == "crypto_rot13":
-            result = crypto_tools.rot_n(arguments["text"], 13)
-        elif name == "crypto_caesar":
-            shift = arguments.get("shift", 3)
-            result = crypto_tools.caesar(arguments["text"], shift)
-        elif name == "crypto_caesar_bruteforce":
-            result = crypto_tools.caesar_bruteforce(arguments["text"])
-        elif name == "crypto_vigenere":
-            decrypt = arguments.get("decrypt", False)
-            result = crypto_tools.vigenere(arguments["text"], arguments["key"], decrypt)
-        elif name == "crypto_xor":
-            input_hex = arguments.get("input_hex", False)
-            result = crypto_tools.xor(arguments["data"], arguments["key"], input_hex)
-        elif name == "crypto_hash":
-            algorithm = arguments.get("algorithm", "sha256")
-            result = crypto_tools.hash_data(arguments["data"], algorithm)
-        elif name == "crypto_rsa_factor":
-            e = arguments.get("e", "65537")
-            result = crypto_tools.rsa_factor(arguments["n"], e)
-        elif name == "crypto_rsa_decrypt":
-            result = crypto_tools.rsa_decrypt(
-                arguments["p"], arguments["q"], arguments["e"], arguments["c"]
-            )
-        elif name == "crypto_freq_analysis":
-            result = crypto_tools.freq_analysis(arguments["text"])
+        # Dynamic tool dispatch using registry
+        if name not in TOOL_REGISTRY:
+            return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
-        # Misc tools
-        elif name == "misc_hex_encode":
-            result = misc_tools.hex_encode(arguments["data"])
-        elif name == "misc_hex_decode":
-            result = misc_tools.hex_decode(arguments["data"])
-        elif name == "misc_url_encode":
-            result = misc_tools.url_encode(arguments["data"])
-        elif name == "misc_url_decode":
-            result = misc_tools.url_decode(arguments["data"])
-        elif name == "misc_binary_convert":
-            result = misc_tools.binary_convert(
-                arguments["data"], arguments["from_base"], arguments["to_base"]
-            )
-        elif name == "misc_find_flag":
-            prefix = arguments.get("prefix", "flag")
-            result = misc_tools.find_flag(arguments["text"], prefix)
-        elif name == "misc_strings_extract":
-            min_length = arguments.get("min_length", 4)
-            result = misc_tools.strings_extract(arguments["data"], min_length)
+        # Get module and method name from registry
+        module, method_name = TOOL_REGISTRY[name]
 
-        # Web tools
-        elif name == "web_sql_payloads":
-            dbms = arguments.get("dbms", "mysql")
-            technique = arguments.get("technique", "union")
-            result = web_tools.sql_payloads(dbms, technique)
-        elif name == "web_xss_payloads":
-            context = arguments.get("context", "html")
-            bypass = arguments.get("bypass", False)
-            result = web_tools.xss_payloads(context, bypass)
-        elif name == "web_lfi_payloads":
-            os_type = arguments.get("os", "linux")
-            wrapper = arguments.get("wrapper", True)
-            result = web_tools.lfi_payloads(os_type, wrapper)
-        elif name == "web_ssti_payloads":
-            engine = arguments.get("engine", "auto")
-            result = web_tools.ssti_payloads(engine)
-        elif name == "web_jwt_decode":
-            result = web_tools.jwt_decode(arguments["token"])
-        elif name == "web_jwt_forge":
-            payload_changes = arguments.get("payload_changes", {})
-            attack = arguments.get("attack", "none")
-            result = web_tools.jwt_forge(arguments["token"], payload_changes, attack)
+        # Get the actual method using getattr
+        method = getattr(module, method_name)
 
-        # Forensics tools
-        elif name == "forensics_file_magic":
-            result = forensics_tools.file_magic(arguments["data"])
-        elif name == "forensics_exif_extract":
-            result = forensics_tools.exif_extract(arguments["file_path"])
-        elif name == "forensics_steghide_detect":
-            result = forensics_tools.steghide_detect(arguments["file_path"])
-        elif name == "forensics_lsb_extract":
-            bits = arguments.get("bits", 1)
-            result = forensics_tools.lsb_extract(arguments["file_path"], bits)
-        elif name == "forensics_strings_file":
-            min_length = arguments.get("min_length", 4)
-            encoding = arguments.get("encoding", "ascii")
-            result = forensics_tools.strings_file(arguments["file_path"], min_length, encoding)
-        elif name == "forensics_binwalk_scan":
-            result = forensics_tools.binwalk_scan(arguments["file_path"])
-
-        # Pwn tools
-        elif name == "pwn_shellcode_gen":
-            arch = arguments.get("arch", "x64")
-            os_type = arguments.get("os", "linux")
-            sc_type = arguments.get("type", "execve")
-            result = pwn_tools.shellcode_gen(arch, os_type, sc_type)
-        elif name == "pwn_pattern_create":
-            length = arguments.get("length", 100)
-            result = pwn_tools.pattern_create(length)
-        elif name == "pwn_pattern_offset":
-            result = pwn_tools.pattern_offset(arguments["value"])
-        elif name == "pwn_rop_gadgets":
-            arch = arguments.get("arch", "x64")
-            gadget_type = arguments.get("gadget_type", "all")
-            result = pwn_tools.rop_gadgets(arch, gadget_type)
-        elif name == "pwn_format_string":
-            arch = arguments.get("arch", "x64")
-            result = pwn_tools.format_string(
-                arguments["target_addr"], arguments["value"], arguments["offset"], arch
-            )
-        elif name == "pwn_libc_offset":
-            libc_version = arguments.get("libc_version", "2.31")
-            result = pwn_tools.libc_offset(arguments["leaked_addr"], arguments["symbol"], libc_version)
-
-        # Reverse tools
-        elif name == "reverse_disasm":
-            arch = arguments.get("arch", "x64")
-            result = reverse_tools.disasm(arguments["code"], arch)
-        elif name == "reverse_asm":
-            arch = arguments.get("arch", "x64")
-            result = reverse_tools.asm(arguments["instructions"], arch)
-        elif name == "reverse_elf_info":
-            result = reverse_tools.elf_info(arguments["file_path"])
-        elif name == "reverse_pe_info":
-            result = reverse_tools.pe_info(arguments["file_path"])
-        elif name == "reverse_deobfuscate":
-            obf_type = arguments.get("type", "auto")
-            result = reverse_tools.deobfuscate(arguments["code"], obf_type)
-
-        else:
-            result = f"Unknown tool: {name}"
+        # Call the method with arguments
+        result = method(**arguments)
 
         return [TextContent(type="text", text=str(result))]
 

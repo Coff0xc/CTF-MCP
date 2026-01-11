@@ -26,17 +26,6 @@ classifiers = [
 
 dependencies = [
     "mcp>=1.0.0",
-    "pycryptodome>=3.20.0",
-    "requests>=2.31.0",
-    "pwntools>=4.11.0",
-    "capstone>=5.0.0",
-    "python-magic>=0.4.27",
-    "Pillow>=10.0.0",
-    "numpy>=1.24.0",
-    "sympy>=1.12",
-    "gmpy2>=2.1.5",
-    "z3-solver>=4.12.0",
-    "angr>=9.2.0",
 ]
 
 [project.optional-dependencies]
@@ -44,6 +33,44 @@ dev = [
     "pytest>=7.4.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
+]
+minimal = []
+standard = [
+    "pycryptodome>=3.20.0",
+    "requests>=2.31.0",
+]
+advanced = [
+    "pycryptodome>=3.20.0",
+    "requests>=2.31.0",
+    "sympy>=1.12",
+    "gmpy2>=2.1.5",
+    "python-magic>=0.4.27",
+    "Pillow>=10.0.0",
+]
+expert = [
+    "pycryptodome>=3.20.0",
+    "requests>=2.31.0",
+    "sympy>=1.12",
+    "gmpy2>=2.1.5",
+    "python-magic>=0.4.27",
+    "Pillow>=10.0.0",
+    "pwntools>=4.11.0",
+    "capstone>=5.0.0",
+    "numpy>=1.24.0",
+    "z3-solver>=4.12.0",
+]
+full = [
+    "pycryptodome>=3.20.0",
+    "requests>=2.31.0",
+    "sympy>=1.12",
+    "gmpy2>=2.1.5",
+    "python-magic>=0.4.27",
+    "Pillow>=10.0.0",
+    "pwntools>=4.11.0",
+    "capstone>=5.0.0",
+    "numpy>=1.24.0",
+    "z3-solver>=4.12.0",
+    "angr>=9.2.0",
 ]
 
 [project.scripts]
