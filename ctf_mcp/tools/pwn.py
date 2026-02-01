@@ -7,11 +7,50 @@ heap exploitation, stack pivot, and multi-architecture support
 import struct
 from typing import Optional, List, Dict, Tuple, Union
 
+from ..utils.security import dangerous_operation, RiskLevel
+from ..utils.helpers import hex_to_bytes as _hex_to_bytes, clean_hex
+
+
+def _compare_glibc_version(version: str, target: str) -> int:
+    """
+    Compare two glibc version strings.
+
+    Returns:
+        -1 if version < target
+         0 if version == target
+         1 if version > target
+    """
+    def parse_version(v: str) -> Tuple[int, ...]:
+        """Parse version string like '2.31' or '2.32-0ubuntu3' to tuple of ints"""
+        # Extract numeric part before any dash or other suffix
+        v = v.split('-')[0].split('+')[0]
+        parts = []
+        for p in v.split('.'):
+            try:
+                parts.append(int(p))
+            except ValueError:
+                break
+        return tuple(parts) if parts else (0,)
+
+    v1 = parse_version(version)
+    v2 = parse_version(target)
+
+    # Pad shorter tuple with zeros
+    max_len = max(len(v1), len(v2))
+    v1 = v1 + (0,) * (max_len - len(v1))
+    v2 = v2 + (0,) * (max_len - len(v2))
+
+    if v1 < v2:
+        return -1
+    elif v1 > v2:
+        return 1
+    return 0
+
 
 class PwnTools:
     """Binary exploitation tools for CTF challenges"""
 
-    def get_tools(self) -> dict:
+    def get_tools(self) -> dict[str, str]:
         """Return available tools and their descriptions"""
         return {
             # Shellcode
@@ -111,6 +150,10 @@ class PwnTools:
         },
     }
 
+    @dangerous_operation(
+        risk_level=RiskLevel.CRITICAL,
+        description="Generates executable shellcode for various architectures"
+    )
     def shellcode_gen(self, arch: str = "x64", os: str = "linux", sc_type: str = "execve") -> str:
         """Generate shellcode for various architectures"""
         result = [f"Shellcode ({arch}/{os}/{sc_type}):", "-" * 50]
@@ -209,7 +252,7 @@ class PwnTools:
                 offset = pattern_str.find(le_str)
                 if offset != -1:
                     result.append(f"[!] Found (little-endian): offset = {offset}")
-            except:
+            except (UnicodeDecodeError, ValueError):
                 pass
 
             # Big endian
@@ -219,7 +262,7 @@ class PwnTools:
                 offset = pattern_str.find(be_str)
                 if offset != -1:
                     result.append(f"[!] Found (big-endian): offset = {offset}")
-            except:
+            except (UnicodeDecodeError, ValueError):
                 pass
 
         # String search
@@ -440,7 +483,7 @@ print(payload)
             return "Invalid bits/endian combination"
 
         try:
-            byte_data = bytes.fromhex(data.replace(" ", "").replace("0x", ""))
+            byte_data = _hex_to_bytes(data)
             value = struct.unpack(fmt[(bits, endian)], byte_data.ljust(bits // 8, b'\x00'))[0]
             return f"Unpacked: {value}\nHex: {hex(value)}"
         except Exception as e:
@@ -481,20 +524,23 @@ print(payload)
 
     # === Shellcode Encoding ===
 
+    @dangerous_operation(
+        risk_level=RiskLevel.HIGH,
+        description="Encodes shellcode to avoid detection and bypass filters"
+    )
     def shellcode_encode(self, shellcode: str, bad_chars: str = "\\x00", encoder: str = "xor") -> str:
         """Encode shellcode to avoid bad characters"""
         result = ["Shellcode Encoder:", "-" * 50]
 
         # Parse shellcode
         try:
-            sc_hex = shellcode.replace("\\x", "").replace(" ", "").replace("0x", "")
-            sc_bytes = bytes.fromhex(sc_hex)
-        except:
+            sc_bytes = _hex_to_bytes(shellcode)
+        except ValueError:
             return "Invalid shellcode format. Use hex (e.g., \\x48\\x31\\xc0)"
 
         # Parse bad chars
-        bad_hex = bad_chars.replace("\\x", "").replace(" ", "").replace("0x", "")
-        bad_bytes = set(bytes.fromhex(bad_hex)) if bad_hex else set()
+        bad_cleaned = clean_hex(bad_chars)
+        bad_bytes = set(bytes.fromhex(bad_cleaned)) if bad_cleaned else set()
 
         result.append(f"Original length: {len(sc_bytes)} bytes")
         result.append(f"Bad characters: {[hex(b) for b in bad_bytes]}")
@@ -551,6 +597,10 @@ print(payload)
 
     # === ROP Chain Building ===
 
+    @dangerous_operation(
+        risk_level=RiskLevel.CRITICAL,
+        description="Builds ROP chains for code execution"
+    )
     def rop_chain_builder(self, target: str = "execve", arch: str = "x64") -> str:
         """Build ROP chain template for common targets"""
         result = ["ROP Chain Builder:", "-" * 50]
@@ -691,6 +741,10 @@ payload = flat([
 
         return '\n'.join(result)
 
+    @dangerous_operation(
+        risk_level=RiskLevel.CRITICAL,
+        description="ret2libc exploitation technique for code execution"
+    )
     def ret2libc(self, libc_base: str = None, arch: str = "x64") -> str:
         """Generate ret2libc exploit template"""
         result = ["ret2libc Exploit Template:", "-" * 50]
@@ -764,6 +818,10 @@ payload = flat([
 
         return '\n'.join(result)
 
+    @dangerous_operation(
+        risk_level=RiskLevel.CRITICAL,
+        description="ret2csu universal gadget exploitation"
+    )
     def ret2csu(self, arch: str = "x64") -> str:
         """Generate ret2csu gadget chain (universal gadget)"""
         result = ["ret2csu (Universal Gadget):", "-" * 50]
@@ -883,7 +941,7 @@ def leak_stack(io, offset, count=20):
             leak = int(io.recvline().strip(), 16)
             leaks.append(leak)
             print(f"Offset {offset + i}: {hex(leak)}")
-        except:
+        except (ValueError, AttributeError):
             pass
     return leaks
 
@@ -991,6 +1049,10 @@ binsh_addr = libc_base + libc.dump("str_bin_sh")
 
     # === Heap Exploitation ===
 
+    @dangerous_operation(
+        risk_level=RiskLevel.HIGH,
+        description="Tcache poisoning heap exploitation technique"
+    )
     def heap_tcache(self, libc_version: str = "2.31") -> str:
         """Tcache poisoning techniques"""
         result = ["Tcache Poisoning Attack:", "-" * 50]
@@ -1043,7 +1105,7 @@ evil_chunk = malloc(0x20)  # Returns target address!
 edit(evil_chunk, p64(system))  # Overwrite GOT/hook
 """)
 
-        if libc_version >= "2.32":
+        if _compare_glibc_version(libc_version, "2.32") >= 0:
             result.append("""
 === SAFE-LINKING BYPASS (glibc 2.32+) ===
 # Need to leak heap address first
@@ -1060,6 +1122,10 @@ edit(freed_chunk, p64(encoded_next))
 
         return '\n'.join(result)
 
+    @dangerous_operation(
+        risk_level=RiskLevel.HIGH,
+        description="Fastbin dup heap exploitation technique"
+    )
     def heap_fastbin(self, arch: str = "x64") -> str:
         """Fastbin dup attack technique"""
         result = ["Fastbin Dup Attack:", "-" * 50]
@@ -1115,6 +1181,10 @@ target = libc.symbols['__malloc_hook'] - 0x23  # Align to find 0x7f
 
         return '\n'.join(result)
 
+    @dangerous_operation(
+        risk_level=RiskLevel.HIGH,
+        description="House of Force heap exploitation technique"
+    )
     def heap_house_of_force(self) -> str:
         """House of Force attack technique"""
         result = ["House of Force:", "-" * 50]
@@ -1170,6 +1240,10 @@ edit(evil, p64(system))
 
         return '\n'.join(result)
 
+    @dangerous_operation(
+        risk_level=RiskLevel.HIGH,
+        description="House of Spirit heap exploitation technique"
+    )
     def heap_house_of_spirit(self) -> str:
         """House of Spirit attack technique"""
         result = ["House of Spirit:", "-" * 50]

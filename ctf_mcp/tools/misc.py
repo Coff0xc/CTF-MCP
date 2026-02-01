@@ -8,20 +8,44 @@ import string
 import urllib.parse
 from typing import Optional
 
+from ..utils.helpers import clean_hex, hex_to_bytes as _hex_to_bytes
+
 
 class MiscTools:
     """Miscellaneous tools for CTF challenges"""
 
-    def get_tools(self) -> dict:
+    def get_tools(self) -> dict[str, str]:
         """Return available tools and their descriptions"""
         return {
+            # Hex Encoding
             "hex_encode": "Encode string to hex",
             "hex_decode": "Decode hex to string",
+            # URL Encoding
             "url_encode": "URL encode string",
             "url_decode": "URL decode string",
-            "binary_convert": "Convert between bases",
-            "find_flag": "Find flag patterns",
-            "strings_extract": "Extract printable strings",
+            # HTML Encoding
+            "html_encode": "HTML encode string (escape special chars)",
+            "html_decode": "HTML decode string (unescape)",
+            # Base Conversion
+            "binary_convert": "Convert between bases (bin/dec/hex/str)",
+            # String Operations
+            "find_flag": "Find flag patterns in text",
+            "strings_extract": "Extract printable strings from hex data",
+            "reverse_string": "Reverse a string",
+            "reverse_words": "Reverse word order in a string",
+            "char_swap": "Swap adjacent characters",
+            "remove_whitespace": "Remove all whitespace from string",
+            "to_leetspeak": "Convert text to leetspeak",
+            # Encoding Detection
+            "detect_encoding": "Detect encoding type of data",
+            # Math Operations
+            "gcd": "Calculate Greatest Common Divisor",
+            "lcm": "Calculate Least Common Multiple",
+            "mod_inverse": "Calculate modular inverse",
+            "chinese_remainder_theorem": "Solve CRT system of congruences",
+            # Morse Code
+            "morse_encode": "Encode text to Morse code",
+            "morse_decode": "Decode Morse code to text",
         }
 
     # === Hex Encoding ===
@@ -34,9 +58,7 @@ class MiscTools:
     def hex_decode(self, data: str) -> str:
         """Decode hexadecimal to string"""
         try:
-            # Clean up hex string
-            data = data.replace(' ', '').replace('0x', '').replace('\\x', '')
-            decoded = bytes.fromhex(data)
+            decoded = _hex_to_bytes(data)
             return f"String: {decoded.decode('utf-8', errors='replace')}\nRaw bytes: {decoded}"
         except Exception as e:
             return f"Decode error: {e}"
@@ -81,7 +103,7 @@ class MiscTools:
             elif from_base == "dec":
                 value = int(data)
             elif from_base == "hex":
-                value = int(data.replace(' ', '').replace('0x', ''), 16)
+                value = int(clean_hex(data), 16)
             elif from_base == "str":
                 value = int.from_bytes(data.encode(), 'big')
             else:
@@ -135,8 +157,8 @@ class MiscTools:
     def strings_extract(self, data: str, min_length: int = 4) -> str:
         """Extract printable strings from hex-encoded binary data"""
         try:
-            binary_data = bytes.fromhex(data.replace(' ', ''))
-        except:
+            binary_data = _hex_to_bytes(data)
+        except ValueError:
             binary_data = data.encode()
 
         printable = set(string.printable.encode()) - set(b'\t\n\r\x0b\x0c')
@@ -172,18 +194,18 @@ class MiscTools:
                 import base64
                 decoded = base64.b64decode(data).decode('utf-8', errors='replace')
                 results.append(f"  Decoded: {decoded[:100]}...")
-            except:
+            except (ValueError, UnicodeDecodeError):
                 pass
 
         # Check Hex
         hex_pattern = r'^[0-9a-fA-F]+$'
-        clean_data = data.replace(' ', '').replace('0x', '').replace('\\x', '')
-        if re.match(hex_pattern, clean_data) and len(clean_data) % 2 == 0:
+        cleaned = clean_hex(data)
+        if re.match(hex_pattern, cleaned) and len(cleaned) % 2 == 0:
             results.append("Possibly Hex encoded")
             try:
-                decoded = bytes.fromhex(clean_data).decode('utf-8', errors='replace')
+                decoded = bytes.fromhex(cleaned).decode('utf-8', errors='replace')
                 results.append(f"  Decoded: {decoded[:100]}...")
-            except:
+            except ValueError:
                 pass
 
         # Check URL encoded
@@ -192,7 +214,7 @@ class MiscTools:
             try:
                 decoded = urllib.parse.unquote(data)
                 results.append(f"  Decoded: {decoded[:100]}...")
-            except:
+            except (ValueError, UnicodeDecodeError):
                 pass
 
         # Check Binary
@@ -202,7 +224,7 @@ class MiscTools:
                 bits = data.replace(' ', '')
                 decoded = ''.join(chr(int(bits[i:i+8], 2)) for i in range(0, len(bits), 8))
                 results.append(f"  Decoded: {decoded[:100]}...")
-            except:
+            except (ValueError, IndexError):
                 pass
 
         # Check ROT13/Caesar

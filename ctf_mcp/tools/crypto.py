@@ -10,7 +10,10 @@ import struct
 import itertools
 from collections import Counter
 from typing import Union, List, Tuple, Optional
-from math import gcd, isqrt
+from math import gcd, isqrt, log2
+
+from ..utils.security import dangerous_operation, RiskLevel
+from ..utils.helpers import rot_n as _rot_n, hex_to_bytes as _hex_to_bytes, clean_hex
 
 # Try to import optional crypto libraries
 try:
@@ -36,6 +39,11 @@ except ImportError:
     SYMPY_AVAILABLE = False
 
 
+# Module-level constants
+ALPHABET_SIZE = 26
+FERMAT_MAX_ITERATIONS = 100_000
+
+
 class CryptoTools:
     """Cryptography tools for CTF challenges"""
 
@@ -48,7 +56,7 @@ class CryptoTools:
         'v': 1.0, 'k': 0.8, 'j': 0.15, 'x': 0.15, 'q': 0.10, 'z': 0.07
     }
 
-    def get_tools(self) -> dict:
+    def get_tools(self) -> dict[str, str]:
         """Return available tools and their descriptions"""
         return {
             # Encoding
@@ -148,14 +156,7 @@ class CryptoTools:
 
     def rot_n(self, text: str, n: int = 13) -> str:
         """ROT-N cipher (default ROT13)"""
-        result = []
-        for char in text:
-            if char.isalpha():
-                base = ord('A') if char.isupper() else ord('a')
-                result.append(chr((ord(char) - base + n) % 26 + base))
-            else:
-                result.append(char)
-        return ''.join(result)
+        return _rot_n(text, n)
 
     def caesar(self, text: str, shift: int = 3) -> str:
         """Caesar cipher with custom shift"""
@@ -233,23 +234,27 @@ class CryptoTools:
     def xor(self, data: str, key: str, input_hex: bool = False) -> str:
         """XOR data with key"""
         if input_hex:
-            data_bytes = bytes.fromhex(data.replace(' ', '').replace('0x', ''))
+            data_bytes = _hex_to_bytes(data)
         else:
             data_bytes = data.encode()
 
-        key_bytes = key.encode() if not input_hex else bytes.fromhex(key.replace(' ', ''))
+        key_bytes = key.encode() if not input_hex else _hex_to_bytes(key)
         result = bytes(a ^ b for a, b in zip(data_bytes, key_bytes * (len(data_bytes) // len(key_bytes) + 1)))
 
         # Try to decode as string, otherwise return hex
         try:
             return f"String: {result.decode()}\nHex: {result.hex()}"
-        except:
+        except UnicodeDecodeError:
             return f"Hex: {result.hex()}"
 
+    @dangerous_operation(
+        risk_level=RiskLevel.MEDIUM,
+        description="XOR bruteforce can be used to break weak encryption"
+    )
     def xor_single_byte_bruteforce(self, data: str, input_hex: bool = True) -> str:
         """Bruteforce single-byte XOR"""
         if input_hex:
-            data_bytes = bytes.fromhex(data.replace(' ', ''))
+            data_bytes = _hex_to_bytes(data)
         else:
             data_bytes = data.encode()
 
@@ -261,7 +266,7 @@ class CryptoTools:
                 if decoded.isprintable():
                     score = sum(1 for c in decoded.lower() if c in 'etaoinshrdlu ')
                     results.append((score, key, decoded))
-            except:
+            except UnicodeDecodeError:
                 pass
 
         results.sort(reverse=True)
@@ -345,7 +350,7 @@ class CryptoTools:
         results.append("Try: factordb.com, RsaCtfTool, or Cado-NFS")
         return '\n'.join(results)
 
-    def _fermat_factor(self, n: int, max_iterations: int = 100000) -> tuple:
+    def _fermat_factor(self, n: int, max_iterations: int = FERMAT_MAX_ITERATIONS) -> tuple:
         """Fermat factorization for close primes"""
         if GMPY2_AVAILABLE:
             a = gmpy2.isqrt(n) + 1
@@ -390,7 +395,7 @@ class CryptoTools:
                     plaintext = long_to_bytes(m)
                     results.append(f"m (bytes) = {plaintext}")
                     results.append(f"m (string) = {plaintext.decode('utf-8', errors='replace')}")
-                except:
+                except (ValueError, OverflowError):
                     pass
             else:
                 try:
@@ -400,7 +405,7 @@ class CryptoTools:
                     plaintext = bytes.fromhex(hex_str)
                     results.append(f"m (bytes) = {plaintext}")
                     results.append(f"m (string) = {plaintext.decode('utf-8', errors='replace')}")
-                except:
+                except (ValueError, OverflowError):
                     pass
 
             return '\n'.join(results)
@@ -446,7 +451,7 @@ class CryptoTools:
                 hex_str = '0' + hex_str
             plaintext = bytes.fromhex(hex_str)
             results.append(f"m (string) = {plaintext.decode('utf-8', errors='replace')}")
-        except:
+        except (ValueError, OverflowError):
             pass
 
         return '\n'.join(results)
@@ -561,7 +566,7 @@ class CryptoTools:
 
         try:
             return result.decode('utf-8', errors='replace')
-        except:
+        except (UnicodeDecodeError, ValueError):
             return result.hex()
 
     def base85_encode(self, data: str) -> str:
@@ -576,7 +581,7 @@ class CryptoTools:
             # Try a85 format
             try:
                 return base64.a85decode(data).decode('utf-8', errors='replace')
-            except:
+            except Exception:
                 return f"Decode error: {e}"
 
     # === Additional Classical Ciphers ===
@@ -747,7 +752,7 @@ class CryptoTools:
             # Find modular inverse of determinant
             try:
                 det_inv = pow(det, -1, 26)
-            except:
+            except (ValueError, ArithmeticError):
                 return "Matrix is not invertible mod 26"
 
             # Adjugate matrix
@@ -992,7 +997,7 @@ class CryptoTools:
 
         try:
             if input_hex:
-                ct_bytes = bytes.fromhex(ciphertext.replace(' ', ''))
+                ct_bytes = _hex_to_bytes(ciphertext)
             else:
                 ct_bytes = base64.b64decode(ciphertext)
 
@@ -1012,6 +1017,10 @@ class CryptoTools:
         except Exception as e:
             return f"Decryption error: {e}"
 
+    @dangerous_operation(
+        risk_level=RiskLevel.MEDIUM,
+        description="DES is deprecated and insecure (56-bit key, vulnerable to brute force)"
+    )
     def des_encrypt(self, plaintext: str, key: str, output_hex: bool = True) -> str:
         """DES encryption (ECB mode)"""
         if not PYCRYPTODOME_AVAILABLE:
@@ -1031,6 +1040,10 @@ class CryptoTools:
         except Exception as e:
             return f"Encryption error: {e}"
 
+    @dangerous_operation(
+        risk_level=RiskLevel.MEDIUM,
+        description="DES is deprecated and insecure (56-bit key, vulnerable to brute force)"
+    )
     def des_decrypt(self, ciphertext: str, key: str, input_hex: bool = True) -> str:
         """DES decryption (ECB mode)"""
         if not PYCRYPTODOME_AVAILABLE:
@@ -1040,7 +1053,7 @@ class CryptoTools:
 
         try:
             if input_hex:
-                ct_bytes = bytes.fromhex(ciphertext.replace(' ', ''))
+                ct_bytes = _hex_to_bytes(ciphertext)
             else:
                 ct_bytes = base64.b64decode(ciphertext)
 
@@ -1050,6 +1063,10 @@ class CryptoTools:
         except Exception as e:
             return f"Decryption error: {e}"
 
+    @dangerous_operation(
+        risk_level=RiskLevel.MEDIUM,
+        description="RC4 is deprecated and has known vulnerabilities (biased keystream, related-key attacks)"
+    )
     def rc4(self, data: str, key: str, input_hex: bool = False) -> str:
         """RC4 stream cipher"""
         if not PYCRYPTODOME_AVAILABLE:
@@ -1057,7 +1074,7 @@ class CryptoTools:
 
         try:
             if input_hex:
-                data_bytes = bytes.fromhex(data.replace(' ', ''))
+                data_bytes = _hex_to_bytes(data)
             else:
                 data_bytes = data.encode()
 
@@ -1066,7 +1083,7 @@ class CryptoTools:
 
             try:
                 return f"Result (string): {result.decode()}\nResult (hex): {result.hex()}"
-            except:
+            except (UnicodeDecodeError, ValueError):
                 return f"Result (hex): {result.hex()}"
         except Exception as e:
             return f"RC4 error: {e}"
@@ -1169,7 +1186,7 @@ class CryptoTools:
                     else:
                         y_i = pow(N_i, -1, n_i)
                     result += c_i * N_i * y_i
-                except:
+                except (ValueError, ArithmeticError):
                     return None, None
             return result % N, N
 
@@ -1196,7 +1213,7 @@ class CryptoTools:
                             hex_str = '0' + hex_str
                         plaintext = bytes.fromhex(hex_str)
                     results.append(f"Plaintext: {plaintext.decode('utf-8', errors='replace')}")
-                except:
+                except (ValueError, UnicodeDecodeError):
                     pass
                 return '\n'.join(results)
         else:
@@ -1237,7 +1254,7 @@ class CryptoTools:
                             hex_str = '0' + hex_str
                         plaintext = bytes.fromhex(hex_str)
                     results.append(f"Plaintext: {plaintext.decode('utf-8', errors='replace')}")
-                except:
+                except (ValueError, UnicodeDecodeError):
                     pass
                 return '\n'.join(results)
 
@@ -1431,6 +1448,10 @@ class CryptoTools:
 
         return '\n'.join(results)
 
+    @dangerous_operation(
+        risk_level=RiskLevel.HIGH,
+        description="Hash cracking can be used to compromise passwords and authentication"
+    )
     def hash_crack(self, hash_str: str, wordlist: str = None) -> str:
         """Attempt to crack hash with common passwords"""
         hash_str = hash_str.strip().lower()
@@ -1485,15 +1506,13 @@ class CryptoTools:
 
     def entropy(self, data: str) -> str:
         """Calculate Shannon entropy"""
-        import math
-
         if not data:
             return "Empty input"
 
         freq = Counter(data)
         length = len(data)
 
-        entropy_val = -sum((count / length) * math.log2(count / length)
+        entropy_val = -sum((count / length) * log2(count / length)
                        for count in freq.values())
 
         max_entropy = math.log2(len(freq)) if len(freq) > 1 else 1
@@ -1534,7 +1553,7 @@ class CryptoTools:
             else:
                 inv = pow(a, -1, m)
             return f"Modular inverse of {a} mod {m} = {inv}"
-        except:
+        except (ValueError, ArithmeticError):
             return f"No modular inverse exists (gcd({a}, {m}) != 1)"
 
     def crt(self, remainders: str, moduli: str) -> str:
@@ -1570,7 +1589,7 @@ class CryptoTools:
                 else:
                     y_i = pow(N_i, -1, m_i)
                 result += r_i * N_i * y_i
-            except:
+            except (ValueError, ArithmeticError):
                 results.append("CRT failed - moduli not coprime")
                 return '\n'.join(results)
 
@@ -1603,7 +1622,7 @@ class CryptoTools:
                 factor = inverse(pow(g, m, p), p)
             else:
                 factor = pow(pow(g, m, p), -1, p)
-        except:
+        except (ValueError, ArithmeticError):
             results.append("Cannot compute inverse")
             return '\n'.join(results)
 
@@ -1696,11 +1715,15 @@ class CryptoTools:
         results.append("No primitive root found (n might not be prime)")
         return '\n'.join(results)
 
+    @dangerous_operation(
+        risk_level=RiskLevel.MEDIUM,
+        description="XOR repeating-key analysis can be used to break weak encryption"
+    )
     def xor_repeating_key(self, ciphertext: str, key_length: int = None,
                           input_hex: bool = True) -> str:
         """Analyze XOR with repeating key"""
         if input_hex:
-            ct = bytes.fromhex(ciphertext.replace(' ', ''))
+            ct = _hex_to_bytes(ciphertext)
         else:
             ct = ciphertext.encode()
 
@@ -1757,7 +1780,7 @@ class CryptoTools:
                         if score > best_score:
                             best_score = score
                             best_key = k
-                    except:
+                    except (ValueError, UnicodeDecodeError):
                         pass
                 key.append(best_key)
 
@@ -1767,14 +1790,14 @@ class CryptoTools:
             try:
                 key_str = bytes(key).decode('ascii')
                 results.append(f"Key (ASCII): {key_str}")
-            except:
+            except (ValueError, UnicodeDecodeError):
                 pass
 
             # Decrypt
             decrypted = bytes(ct[i] ^ key[i % len(key)] for i in range(len(ct)))
             try:
                 results.append(f"\nDecrypted: {decrypted.decode('utf-8', errors='replace')[:200]}...")
-            except:
+            except (UnicodeDecodeError, ValueError):
                 results.append(f"\nDecrypted (hex): {decrypted.hex()[:100]}...")
 
         return '\n'.join(results)

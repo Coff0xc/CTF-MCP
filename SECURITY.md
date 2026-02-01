@@ -65,27 +65,99 @@ CTF-MCP uses a four-level risk classification system:
 - Can cause severe damage
 - **Requires written authorization**
 
+## 📊 Security Audit Statistics / 安全审计统计
+
+CTF-MCP has undergone a comprehensive security audit. All dangerous operations are protected with `@dangerous_operation` decorators that display warnings before execution.
+
+CTF-MCP 已完成全面的安全审计。所有危险操作都使用 `@dangerous_operation` 装饰器保护，在执行前会显示警告。
+
+### Overall Statistics / 总体统计
+- **Total Security Decorators**: 33
+- **Modules Audited**: 6
+- **Risk Distribution**:
+  - 🔴 CRITICAL: 14 tools
+  - 🟠 HIGH: 13 tools
+  - 🟡 MEDIUM: 6 tools
+  - 🟢 LOW: All other tools (no decorator needed)
+
+### Module Breakdown / 模块分解
+
+| Module | Total Decorators | CRITICAL | HIGH | MEDIUM |
+|--------|-----------------|----------|------|--------|
+| **pwn.py** | 9 | 7 | 2 | 0 |
+| **web.py** | 17 | 5 | 10 | 2 |
+| **crypto.py** | 6 | 0 | 1 | 5 |
+| **reverse.py** | 1 | 0 | 0 | 1 |
+| **misc.py** | 0 | 0 | 0 | 0 |
+| **forensics.py** | 0 | 0 | 0 | 0 |
+| **Total** | **33** | **14** | **13** | **6** |
+
 ## 🚨 Critical Risk Tools / 高危工具
 
 The following tools are classified as **CRITICAL** risk and will display security warnings before use:
 
 以下工具被分类为**高危**风险，使用前会显示安全警告：
 
-### Deserialization Exploits / 反序列化漏洞利用
-- `pickle_payload` - Python pickle RCE payloads
-- `yaml_deserialize` - YAML deserialization RCE
-- `nodejs_deserialize` - Node.js deserialization RCE
+### Binary Exploitation (pwn.py) - 7 tools
+- `shellcode_gen` - Generate executable shellcode for various architectures
+- `rop_chain_builder` - Build ROP chains for code execution
+- `ret2libc` - ret2libc exploitation technique
+- `ret2csu` - ret2csu universal gadget exploitation
+- `heap_tcache` - Tcache poisoning heap exploitation
+- `heap_fastbin` - Fastbin dup heap exploitation
+- `heap_house_of_force` - House of Force heap exploitation
+- `heap_house_of_spirit` - House of Spirit heap exploitation
 
-### Template Injection / 模板注入
-- `ssti_payloads` - Server-Side Template Injection payloads
-
-### Command Injection / 命令注入
+### Web Exploitation (web.py) - 7 tools
+- `ssti_payloads` - Server-Side Template Injection (SSTI) payloads for RCE
+- `pickle_payload` - Python pickle deserialization RCE payloads
+- `php_unserialize_exploit` - PHP unserialize exploits with gadget chains
+- `java_deserialize` - Java deserialization payloads (ysoserial)
+- `nodejs_deserialize` - Node.js deserialization RCE payloads
+- `yaml_deserialize` - YAML deserialization RCE payloads
 - `cmd_injection` - OS command injection payloads
+- `cmd_blind` - Blind command injection techniques (time-based, OOB)
 
-### Other High-Risk Tools / 其他高危工具
-- `reverse_shell_gen` - Reverse shell generation
-- `lateral_*_exec` - Lateral movement tools
-- `exploit_*` - Exploitation tools
+## 🟠 High Risk Tools / 高风险工具
+
+The following tools are classified as **HIGH** risk:
+
+以下工具被分类为**高风险**：
+
+### Binary Exploitation (pwn.py) - 2 tools
+- `shellcode_encode` - Encode shellcode to avoid detection and bypass filters
+
+### Web Exploitation (web.py) - 10 tools
+- `sql_payloads` - SQL injection payloads for data extraction/modification
+- `lfi_payloads` - Local File Inclusion payloads for file read and RCE
+- `rfi_payloads` - Remote File Inclusion payloads for RCE
+- `ssrf_payloads` - Server-Side Request Forgery payloads for internal access
+- `xxe_payloads` - XXE injection payloads for file read and SSRF
+- `xxe_oob` - Out-of-band XXE data exfiltration techniques
+- `xxe_blind` - Blind XXE exploitation techniques
+- `http_smuggling` - HTTP request smuggling for security bypass
+
+### Cryptography (crypto.py) - 1 tool
+- `hash_crack` - Password hash cracking with wordlists
+
+## 🟡 Medium Risk Tools / 中风险工具
+
+The following tools are classified as **MEDIUM** risk:
+
+以下工具被分类为**中风险**：
+
+### Web Exploitation (web.py) - 2 tools
+- `xss_payloads` - Cross-Site Scripting payloads for client-side attacks
+
+### Cryptography (crypto.py) - 5 tools
+- `xor_single_byte_bruteforce` - Brute force single-byte XOR encryption
+- `des_encrypt` - DES encryption (weak algorithm)
+- `des_decrypt` - DES decryption
+- `rc4` - RC4 stream cipher (deprecated algorithm)
+- `xor_repeating_key` - XOR with repeating key encryption
+
+### Reverse Engineering (reverse.py) - 1 tool
+- `asm` - Generate executable machine code from assembly instructions
 
 ## 🛡️ Security Best Practices / 安全最佳实践
 

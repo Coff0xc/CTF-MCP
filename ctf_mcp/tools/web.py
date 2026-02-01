@@ -20,7 +20,7 @@ from ..utils.security import dangerous_operation, RiskLevel
 class WebTools:
     """Web security tools for CTF challenges"""
 
-    def get_tools(self) -> dict:
+    def get_tools(self) -> dict[str, str]:
         """Return available tools and their descriptions"""
         return {
             # SQL Injection
@@ -90,6 +90,10 @@ class WebTools:
 
     # === SQL Injection ===
 
+    @dangerous_operation(
+        risk_level=RiskLevel.HIGH,
+        description="SQL injection payloads can be used to extract, modify, or delete database data"
+    )
     def sql_payloads(self, dbms: str = "mysql", technique: str = "union") -> str:
         """Generate SQL injection payloads"""
         payloads = {
@@ -186,6 +190,10 @@ class WebTools:
 
     # === XSS ===
 
+    @dangerous_operation(
+        risk_level=RiskLevel.MEDIUM,
+        description="XSS payloads can be used to execute malicious JavaScript in victim browsers"
+    )
     def xss_payloads(self, context: str = "html", bypass: bool = False) -> str:
         """Generate XSS payloads"""
         payloads = {
@@ -260,6 +268,10 @@ class WebTools:
 
     # === LFI/RFI ===
 
+    @dangerous_operation(
+        risk_level=RiskLevel.HIGH,
+        description="Local File Inclusion (LFI) can be used to read sensitive files and potentially achieve remote code execution"
+    )
     def lfi_payloads(self, os: str = "linux", wrapper: bool = True) -> str:
         """Generate Local File Inclusion payloads"""
         linux_files = [
@@ -674,6 +686,10 @@ print(payload)
 
         return '\n'.join(result)
 
+    @dangerous_operation(
+        risk_level=RiskLevel.CRITICAL,
+        description="PHP unserialize exploits can lead to remote code execution through gadget chains"
+    )
     def php_unserialize_exploit(self, gadget: str = "all") -> str:
         """PHP unserialize exploits with common gadget chains"""
         gadgets = {
@@ -737,6 +753,10 @@ $phar->stopBuffering();
 
         return '\n'.join(result)
 
+    @dangerous_operation(
+        risk_level=RiskLevel.CRITICAL,
+        description="Java deserialization can lead to remote code execution through gadget chains like ysoserial"
+    )
     def java_deserialize(self, gadget: str = "all") -> str:
         """Java deserialization payloads and tools"""
         gadgets = {
@@ -958,6 +978,10 @@ $phar->stopBuffering();
 
         return '\n'.join(result)
 
+    @dangerous_operation(
+        risk_level=RiskLevel.CRITICAL,
+        description="Blind command injection techniques can execute arbitrary OS commands without visible output, using time delays, out-of-band DNS/HTTP channels, or file writes for detection"
+    )
     def cmd_blind(self, technique: str = "all") -> str:
         """Blind command injection techniques"""
         techniques = {
@@ -1030,6 +1054,10 @@ $phar->stopBuffering();
 
     # === SSRF ===
 
+    @dangerous_operation(
+        risk_level=RiskLevel.HIGH,
+        description="SSRF payloads can be used to access internal services, cloud metadata endpoints, and bypass network restrictions"
+    )
     def ssrf_payloads(self, bypass: bool = True) -> str:
         """SSRF payloads and bypass techniques"""
         basic_payloads = [
@@ -1218,6 +1246,10 @@ $phar->stopBuffering();
 
     # === XXE ===
 
+    @dangerous_operation(
+        risk_level=RiskLevel.HIGH,
+        description="XXE payloads can be used to read local files, perform SSRF attacks, and cause denial of service"
+    )
     def xxe_payloads(self, target: str = "file") -> str:
         """XXE injection payloads"""
         payloads = {
@@ -1274,6 +1306,10 @@ $phar->stopBuffering();
 
         return '\n'.join(result)
 
+    @dangerous_operation(
+        risk_level=RiskLevel.HIGH,
+        description="Out-of-band XXE can be used to exfiltrate sensitive data via HTTP/FTP/DNS channels"
+    )
     def xxe_oob(self, exfil_server: str = "attacker.com") -> str:
         """Out-of-band XXE techniques"""
         result = ["Out-of-Band XXE:", "-" * 50]
@@ -1311,6 +1347,10 @@ $phar->stopBuffering();
 
         return '\n'.join(result)
 
+    @dangerous_operation(
+        risk_level=RiskLevel.HIGH,
+        description="Blind XXE techniques can be used to exfiltrate sensitive data via error messages, PHP wrappers, or cause denial of service through entity expansion attacks"
+    )
     def xxe_blind(self) -> str:
         """Blind XXE payloads"""
         result = ["Blind XXE Techniques:", "-" * 50]
@@ -1573,6 +1613,10 @@ $phar->stopBuffering();
 
     # === RFI/Path Traversal ===
 
+    @dangerous_operation(
+        risk_level=RiskLevel.HIGH,
+        description="Remote File Inclusion (RFI) can lead to remote code execution by including malicious remote files"
+    )
     def rfi_payloads(self) -> str:
         """Remote File Inclusion payloads"""
         payloads = [
@@ -1943,6 +1987,10 @@ fetch("{url}", {{
 
     # === HTTP Request Smuggling ===
 
+    @dangerous_operation(
+        risk_level=RiskLevel.HIGH,
+        description="HTTP request smuggling can bypass security controls, poison web caches, and perform request hijacking by exploiting discrepancies in how front-end and back-end servers parse HTTP requests (CL.TE, TE.CL, TE.TE variants)"
+    )
     def http_smuggling(self) -> str:
         """HTTP request smuggling payloads"""
         payloads = {

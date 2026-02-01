@@ -3,8 +3,13 @@ Reverse Engineering Tools Module for CTF-MCP
 Disassembly, file analysis, and deobfuscation tools
 """
 
+import base64
+import string
 import struct
 from typing import Optional
+
+from ..utils.security import dangerous_operation, RiskLevel
+from ..utils.helpers import hex_to_bytes as _hex_to_bytes, clean_hex
 
 # Try to import capstone for disassembly
 try:
@@ -17,7 +22,7 @@ except ImportError:
 class ReverseTools:
     """Reverse engineering tools for CTF challenges"""
 
-    def get_tools(self) -> dict:
+    def get_tools(self) -> dict[str, str]:
         """Return available tools and their descriptions"""
         return {
             "disasm": "Disassemble machine code",
@@ -25,6 +30,8 @@ class ReverseTools:
             "elf_info": "Parse ELF header",
             "pe_info": "Parse PE header",
             "deobfuscate": "Deobfuscate code",
+            "find_strings": "Extract printable strings from binary file",
+            "find_gadgets_in_hex": "Find common ROP gadgets in hex data",
         }
 
     # === Disassembly ===
@@ -35,8 +42,8 @@ class ReverseTools:
             return "Capstone not available. Install with: pip install capstone"
 
         try:
-            code_bytes = bytes.fromhex(code.replace(" ", "").replace("\\x", ""))
-        except:
+            code_bytes = _hex_to_bytes(code)
+        except ValueError:
             return "Invalid hex code"
 
         arch_map = {
@@ -60,6 +67,10 @@ class ReverseTools:
 
         return '\n'.join(result)
 
+    @dangerous_operation(
+        risk_level=RiskLevel.MEDIUM,
+        description="Generates executable machine code that could be used for exploitation"
+    )
     def asm(self, instructions: str, arch: str = "x64") -> str:
         """Assemble instructions to machine code (using keystone if available)"""
         try:
@@ -266,11 +277,10 @@ class ReverseTools:
         result = ["Deobfuscation Attempt:", "-" * 50]
 
         if obf_type == "auto" or obf_type == "base64":
-            import base64
             try:
                 decoded = base64.b64decode(code).decode('utf-8', errors='replace')
                 result.append(f"Base64 decoded: {decoded[:200]}")
-            except:
+            except (ValueError, UnicodeDecodeError):
                 pass
 
         if obf_type == "auto" or obf_type == "rot13":
@@ -286,23 +296,23 @@ class ReverseTools:
         if obf_type == "auto" or obf_type == "xor":
             # Try single-byte XOR
             try:
-                code_bytes = bytes.fromhex(code.replace(" ", ""))
+                code_bytes = _hex_to_bytes(code)
                 for key in [0xFF, 0x41, 0x55, 0xAA]:
                     decoded = bytes(b ^ key for b in code_bytes)
                     try:
                         decoded_str = decoded.decode('ascii')
                         if decoded_str.isprintable():
                             result.append(f"XOR 0x{key:02x}: {decoded_str[:100]}")
-                    except:
+                    except UnicodeDecodeError:
                         pass
-            except:
+            except ValueError:
                 pass
 
         if obf_type == "auto" or obf_type == "hex":
             try:
-                decoded = bytes.fromhex(code.replace(" ", "")).decode('utf-8', errors='replace')
+                decoded = _hex_to_bytes(code).decode('utf-8', errors='replace')
                 result.append(f"Hex decoded: {decoded[:200]}")
-            except:
+            except ValueError:
                 pass
 
         if len(result) == 2:
@@ -318,7 +328,6 @@ class ReverseTools:
             with open(file_path, 'rb') as f:
                 data = f.read()
 
-            import string
             printable = set(string.printable.encode()) - set(b'\t\n\r\x0b\x0c')
 
             strings = []
@@ -381,13 +390,13 @@ class ReverseTools:
         if arch not in patterns:
             return f"Unknown architecture. Available: {list(patterns.keys())}"
 
-        hex_data = hex_data.lower().replace(" ", "").replace("\\x", "")
+        cleaned = clean_hex(hex_data).lower()
         result = [f"Gadget Search ({arch}):", "-" * 50]
 
         for name, pattern in patterns[arch].items():
             idx = 0
             while True:
-                idx = hex_data.find(pattern, idx)
+                idx = cleaned.find(pattern, idx)
                 if idx == -1:
                     break
                 offset = idx // 2

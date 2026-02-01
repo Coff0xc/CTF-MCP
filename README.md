@@ -27,6 +27,13 @@ A Model Context Protocol (MCP) server providing comprehensive tools for CTF (Cap
 - 🟠 HIGH: Exploitation tools (explicit authorization required)
 - 🔴 CRITICAL: RCE/Deserialization payloads (written authorization required)
 
+**Security Audit Results:**
+- 🔒 **Total Security Decorators**: 33 dangerous operations protected
+- 🔴 **CRITICAL**: 14 tools (RCE, deserialization)
+- 🟠 **HIGH**: 13 tools (exploitation, injection)
+- 🟡 **MEDIUM**: 6 tools (weak crypto, code generation)
+- See [SECURITY.md](SECURITY.md) for complete tool lists and descriptions
+
 **By using CTF-MCP, you agree to use it responsibly and legally.**
 
 ### Features
@@ -150,6 +157,13 @@ Add to your MCP client configuration:
 - 🟡 中风险：漏洞检测（需要授权）
 - 🟠 高风险：漏洞利用工具（需要明确授权）
 - 🔴 严重风险：RCE/反序列化 payload（需要书面授权）
+
+**安全审计结果：**
+- 🔒 **安全装饰器总数**: 33个危险操作受保护
+- 🔴 **高危**: 14个工具（远程代码执行、反序列化）
+- 🟠 **高风险**: 13个工具（漏洞利用、注入）
+- 🟡 **中风险**: 6个工具（弱加密、代码生成）
+- 查看 [SECURITY.md](SECURITY.md) 获取完整工具列表和说明
 
 **使用 CTF-MCP 即表示您同意负责任且合法地使用它。**
 

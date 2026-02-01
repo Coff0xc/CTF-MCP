@@ -2,11 +2,16 @@
 """
 CTF-MCP Server - MCP Server for CTF Challenges
 Provides tools for Crypto, Web, Pwn, Reverse, Forensics, and Misc challenges
+
+Dynamically registers all tools from tool modules using introspection.
 """
 
 import asyncio
+import inspect
+import json
 import logging
-from typing import Any
+import re
+from typing import Any, get_type_hints, get_origin, get_args, Union
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -18,6 +23,7 @@ from .tools.pwn import PwnTools
 from .tools.reverse import ReverseTools
 from .tools.forensics import ForensicsTools
 from .tools.misc import MiscTools
+from .core.orchestrator import CTFOrchestrator, Challenge, SolveResult
 
 # Configure logging
 logging.basicConfig(
@@ -37,550 +43,252 @@ reverse_tools = ReverseTools()
 forensics_tools = ForensicsTools()
 misc_tools = MiscTools()
 
+# Module registry
+MODULES = [
+    ("crypto", crypto_tools),
+    ("web", web_tools),
+    ("pwn", pwn_tools),
+    ("reverse", reverse_tools),
+    ("forensics", forensics_tools),
+    ("misc", misc_tools),
+]
+
 # Tool registry - maps tool names to their handlers
 TOOL_REGISTRY: dict[str, tuple[Any, str]] = {}
 
+# Tool schema cache
+TOOL_SCHEMAS: dict[str, Tool] = {}
+
+
+def python_type_to_json_schema(py_type: Any) -> dict:
+    """Convert Python type annotation to JSON Schema type"""
+    if py_type is None or py_type is type(None):
+        return {"type": "null"}
+
+    origin = get_origin(py_type)
+    args = get_args(py_type)
+
+    # Handle Optional[X] (Union[X, None])
+    if origin is Union:
+        non_none_args = [a for a in args if a is not type(None)]
+        if len(non_none_args) == 1:
+            # Optional[X] -> X with nullable
+            return python_type_to_json_schema(non_none_args[0])
+        # Union of multiple types - use anyOf
+        return {"anyOf": [python_type_to_json_schema(a) for a in non_none_args]}
+
+    # Handle List[X]
+    if origin is list:
+        if args:
+            return {"type": "array", "items": python_type_to_json_schema(args[0])}
+        return {"type": "array"}
+
+    # Handle Dict[K, V]
+    if origin is dict:
+        return {"type": "object"}
+
+    # Basic types
+    type_map = {
+        str: {"type": "string"},
+        int: {"type": "integer"},
+        float: {"type": "number"},
+        bool: {"type": "boolean"},
+        bytes: {"type": "string", "description": "Hex-encoded bytes"},
+        list: {"type": "array"},
+        dict: {"type": "object"},
+    }
+
+    return type_map.get(py_type, {"type": "string"})
+
+
+def generate_input_schema(module: Any, method_name: str) -> dict:
+    """Generate JSON Schema for a method's input parameters"""
+    method = getattr(module, method_name)
+    sig = inspect.signature(method)
+
+    # Try to get type hints
+    try:
+        hints = get_type_hints(method)
+    except Exception:
+        hints = {}
+
+    properties = {}
+    required = []
+
+    for param_name, param in sig.parameters.items():
+        # Skip 'self' parameter
+        if param_name == "self":
+            continue
+
+        # Get type from hints or default to string
+        param_type = hints.get(param_name, str)
+        schema = python_type_to_json_schema(param_type)
+
+        # Add description from docstring if available
+        doc = method.__doc__ or ""
+        # Try to extract parameter description from docstring
+        # Format: :param name: description or name: description
+        param_doc_match = re.search(
+            rf':param\s+{param_name}:\s*(.+?)(?=\n\s*:|$)',
+            doc,
+            re.DOTALL
+        )
+        if param_doc_match:
+            schema["description"] = param_doc_match.group(1).strip()
+
+        # Handle default values
+        if param.default is not inspect.Parameter.empty:
+            schema["default"] = param.default
+        else:
+            # No default = required
+            required.append(param_name)
+
+        properties[param_name] = schema
+
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required
+    }
+
 
 def register_tools():
-    """Register all tools from all modules"""
-    modules = [
-        ("crypto", crypto_tools),
-        ("web", web_tools),
-        ("pwn", pwn_tools),
-        ("reverse", reverse_tools),
-        ("forensics", forensics_tools),
-        ("misc", misc_tools),
-    ]
+    """Register all tools from all modules dynamically"""
+    for prefix, module in MODULES:
+        # Get tool definitions from module
+        tools_dict = module.get_tools()
 
-    for prefix, module in modules:
-        for tool_name, tool_info in module.get_tools().items():
+        for tool_name, description in tools_dict.items():
             full_name = f"{prefix}_{tool_name}"
-            TOOL_REGISTRY[full_name] = (module, tool_name)
-            logger.debug(f"Registered tool: {full_name}")
 
-    logger.info(f"Registered {len(TOOL_REGISTRY)} tools")
+            # Verify method exists
+            if not hasattr(module, tool_name):
+                logger.warning("Method %s not found in %s module, skipping", tool_name, prefix)
+                continue
+
+            # Register in tool registry
+            TOOL_REGISTRY[full_name] = (module, tool_name)
+
+            # Generate schema
+            try:
+                input_schema = generate_input_schema(module, tool_name)
+            except Exception as e:
+                logger.warning("Failed to generate schema for %s: %s", full_name, e)
+                input_schema = {"type": "object", "properties": {}, "required": []}
+
+            # Create Tool object
+            TOOL_SCHEMAS[full_name] = Tool(
+                name=full_name,
+                description=description,
+                inputSchema=input_schema
+            )
+
+            logger.debug("Registered tool: %s", full_name)
+
+    logger.info("Registered %d tools", len(TOOL_REGISTRY))
+
+    # Register orchestrator tools
+    _register_orchestrator_tools()
+
+
+def _register_orchestrator_tools():
+    """Register orchestrator-specific tools"""
+    # Auto-solve tool
+    TOOL_SCHEMAS["auto_solve"] = Tool(
+        name="auto_solve",
+        description="Automatically solve a CTF challenge. Analyzes the challenge, plans strategies, and executes them.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Challenge name/identifier"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Challenge description text",
+                    "default": ""
+                },
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of file paths associated with the challenge",
+                    "default": []
+                },
+                "remote": {
+                    "type": "string",
+                    "description": "Remote connection info (host:port or URL)",
+                    "default": ""
+                },
+                "flag_format": {
+                    "type": "string",
+                    "description": "Expected flag format regex",
+                    "default": "flag\\{[^}]+\\}"
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Category hint (crypto, web, pwn, reverse, forensics, misc)",
+                    "default": ""
+                },
+                "timeout": {
+                    "type": "number",
+                    "description": "Maximum time in seconds",
+                    "default": 300
+                }
+            },
+            "required": ["name"]
+        }
+    )
+    TOOL_REGISTRY["auto_solve"] = (None, "_auto_solve")
+
+    # Classify tool
+    TOOL_SCHEMAS["classify_challenge"] = Tool(
+        name="classify_challenge",
+        description="Classify a CTF challenge type without solving it. Returns likely categories and confidence scores.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "Challenge description text",
+                    "default": ""
+                },
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of file paths",
+                    "default": []
+                },
+                "remote": {
+                    "type": "string",
+                    "description": "Remote connection info",
+                    "default": ""
+                }
+            },
+            "required": []
+        }
+    )
+    TOOL_REGISTRY["classify_challenge"] = (None, "_classify_challenge")
+
+    logger.info("Registered orchestrator tools: auto_solve, classify_challenge")
 
 
 @app.list_tools()
 async def list_tools() -> list[Tool]:
-    """List all available CTF tools"""
-    tools = []
-
-    # Crypto tools
-    tools.extend([
-        Tool(
-            name="crypto_base64_encode",
-            description="Base64 encode data",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "data": {"type": "string", "description": "Data to encode"}
-                },
-                "required": ["data"]
-            }
-        ),
-        Tool(
-            name="crypto_base64_decode",
-            description="Base64 decode data",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "data": {"type": "string", "description": "Base64 encoded data"}
-                },
-                "required": ["data"]
-            }
-        ),
-        Tool(
-            name="crypto_rot13",
-            description="ROT13 cipher encode/decode",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string", "description": "Text to encode/decode"}
-                },
-                "required": ["text"]
-            }
-        ),
-        Tool(
-            name="crypto_caesar",
-            description="Caesar cipher with custom shift",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string", "description": "Text to encrypt/decrypt"},
-                    "shift": {"type": "integer", "description": "Shift value (1-25)", "default": 3}
-                },
-                "required": ["text"]
-            }
-        ),
-        Tool(
-            name="crypto_caesar_bruteforce",
-            description="Bruteforce all Caesar cipher shifts",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string", "description": "Ciphertext to bruteforce"}
-                },
-                "required": ["text"]
-            }
-        ),
-        Tool(
-            name="crypto_vigenere",
-            description="Vigenere cipher encrypt/decrypt",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string", "description": "Text to process"},
-                    "key": {"type": "string", "description": "Cipher key"},
-                    "decrypt": {"type": "boolean", "description": "Decrypt mode", "default": False}
-                },
-                "required": ["text", "key"]
-            }
-        ),
-        Tool(
-            name="crypto_xor",
-            description="XOR data with a key",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "data": {"type": "string", "description": "Data (hex or string)"},
-                    "key": {"type": "string", "description": "XOR key"},
-                    "input_hex": {"type": "boolean", "description": "Input is hex", "default": False}
-                },
-                "required": ["data", "key"]
-            }
-        ),
-        Tool(
-            name="crypto_hash",
-            description="Calculate hash of data (MD5, SHA1, SHA256, SHA512)",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "data": {"type": "string", "description": "Data to hash"},
-                    "algorithm": {"type": "string", "description": "Hash algorithm", "enum": ["md5", "sha1", "sha256", "sha512"], "default": "sha256"}
-                },
-                "required": ["data"]
-            }
-        ),
-        Tool(
-            name="crypto_rsa_factor",
-            description="Factor RSA modulus n using various methods",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "n": {"type": "string", "description": "RSA modulus n (decimal)"},
-                    "e": {"type": "string", "description": "Public exponent e", "default": "65537"}
-                },
-                "required": ["n"]
-            }
-        ),
-        Tool(
-            name="crypto_rsa_decrypt",
-            description="Decrypt RSA ciphertext given p, q, e, c",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "p": {"type": "string", "description": "Prime p"},
-                    "q": {"type": "string", "description": "Prime q"},
-                    "e": {"type": "string", "description": "Public exponent"},
-                    "c": {"type": "string", "description": "Ciphertext"}
-                },
-                "required": ["p", "q", "e", "c"]
-            }
-        ),
-        Tool(
-            name="crypto_freq_analysis",
-            description="Frequency analysis on ciphertext",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string", "description": "Ciphertext to analyze"}
-                },
-                "required": ["text"]
-            }
-        ),
-    ])
-
-    # Misc tools
-    tools.extend([
-        Tool(
-            name="misc_hex_encode",
-            description="Encode string to hexadecimal",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "data": {"type": "string", "description": "Data to encode"}
-                },
-                "required": ["data"]
-            }
-        ),
-        Tool(
-            name="misc_hex_decode",
-            description="Decode hexadecimal to string",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "data": {"type": "string", "description": "Hex data to decode"}
-                },
-                "required": ["data"]
-            }
-        ),
-        Tool(
-            name="misc_url_encode",
-            description="URL encode string",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "data": {"type": "string", "description": "Data to encode"}
-                },
-                "required": ["data"]
-            }
-        ),
-        Tool(
-            name="misc_url_decode",
-            description="URL decode string",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "data": {"type": "string", "description": "URL encoded data"}
-                },
-                "required": ["data"]
-            }
-        ),
-        Tool(
-            name="misc_binary_convert",
-            description="Convert between binary, decimal, hex, and string",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "data": {"type": "string", "description": "Data to convert"},
-                    "from_base": {"type": "string", "description": "Source format", "enum": ["bin", "dec", "hex", "str"]},
-                    "to_base": {"type": "string", "description": "Target format", "enum": ["bin", "dec", "hex", "str"]}
-                },
-                "required": ["data", "from_base", "to_base"]
-            }
-        ),
-        Tool(
-            name="misc_find_flag",
-            description="Search for flag patterns in text",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "text": {"type": "string", "description": "Text to search"},
-                    "prefix": {"type": "string", "description": "Flag prefix", "default": "flag"}
-                },
-                "required": ["text"]
-            }
-        ),
-        Tool(
-            name="misc_strings_extract",
-            description="Extract printable strings from binary data",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "data": {"type": "string", "description": "Hex-encoded binary data"},
-                    "min_length": {"type": "integer", "description": "Minimum string length", "default": 4}
-                },
-                "required": ["data"]
-            }
-        ),
-    ])
-
-    # Web tools
-    tools.extend([
-        Tool(
-            name="web_sql_payloads",
-            description="Generate SQL injection payloads",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "dbms": {"type": "string", "description": "Database type", "enum": ["mysql", "postgresql", "mssql", "oracle", "sqlite"], "default": "mysql"},
-                    "technique": {"type": "string", "description": "Injection technique", "enum": ["union", "error", "blind", "time"], "default": "union"}
-                },
-                "required": []
-            }
-        ),
-        Tool(
-            name="web_xss_payloads",
-            description="Generate XSS payloads",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "context": {"type": "string", "description": "Injection context", "enum": ["html", "attribute", "script", "url"], "default": "html"},
-                    "bypass": {"type": "boolean", "description": "Include WAF bypass variants", "default": False}
-                },
-                "required": []
-            }
-        ),
-        Tool(
-            name="web_lfi_payloads",
-            description="Generate Local File Inclusion payloads",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "os": {"type": "string", "description": "Target OS", "enum": ["linux", "windows"], "default": "linux"},
-                    "wrapper": {"type": "boolean", "description": "Include PHP wrappers", "default": True}
-                },
-                "required": []
-            }
-        ),
-        Tool(
-            name="web_ssti_payloads",
-            description="Generate Server-Side Template Injection payloads",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "engine": {"type": "string", "description": "Template engine", "enum": ["jinja2", "twig", "freemarker", "velocity", "auto"], "default": "auto"}
-                },
-                "required": []
-            }
-        ),
-        Tool(
-            name="web_jwt_decode",
-            description="Decode and analyze JWT token",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "token": {"type": "string", "description": "JWT token to decode"}
-                },
-                "required": ["token"]
-            }
-        ),
-        Tool(
-            name="web_jwt_forge",
-            description="Forge JWT token with none algorithm or weak secret",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "token": {"type": "string", "description": "Original JWT token"},
-                    "payload_changes": {"type": "object", "description": "Payload modifications"},
-                    "attack": {"type": "string", "description": "Attack type", "enum": ["none", "weak_secret"], "default": "none"}
-                },
-                "required": ["token"]
-            }
-        ),
-    ])
-
-    # Forensics tools
-    tools.extend([
-        Tool(
-            name="forensics_file_magic",
-            description="Identify file type by magic bytes",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "data": {"type": "string", "description": "Hex-encoded file header (first 32 bytes)"}
-                },
-                "required": ["data"]
-            }
-        ),
-        Tool(
-            name="forensics_exif_extract",
-            description="Extract EXIF metadata from image",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string", "description": "Path to image file"}
-                },
-                "required": ["file_path"]
-            }
-        ),
-        Tool(
-            name="forensics_steghide_detect",
-            description="Detect potential steganography in image",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string", "description": "Path to image file"}
-                },
-                "required": ["file_path"]
-            }
-        ),
-        Tool(
-            name="forensics_lsb_extract",
-            description="Extract LSB hidden data from image",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string", "description": "Path to image file"},
-                    "bits": {"type": "integer", "description": "Number of LSB bits", "default": 1}
-                },
-                "required": ["file_path"]
-            }
-        ),
-        Tool(
-            name="forensics_strings_file",
-            description="Extract strings from a file",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string", "description": "Path to file"},
-                    "min_length": {"type": "integer", "description": "Minimum string length", "default": 4},
-                    "encoding": {"type": "string", "description": "String encoding", "enum": ["ascii", "utf-8", "utf-16"], "default": "ascii"}
-                },
-                "required": ["file_path"]
-            }
-        ),
-        Tool(
-            name="forensics_binwalk_scan",
-            description="Scan file for embedded files and data",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string", "description": "Path to file"}
-                },
-                "required": ["file_path"]
-            }
-        ),
-    ])
-
-    # Pwn tools
-    tools.extend([
-        Tool(
-            name="pwn_shellcode_gen",
-            description="Generate shellcode for various architectures",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "arch": {"type": "string", "description": "Architecture", "enum": ["x86", "x64", "arm", "arm64"], "default": "x64"},
-                    "os": {"type": "string", "description": "Operating system", "enum": ["linux", "windows"], "default": "linux"},
-                    "type": {"type": "string", "description": "Shellcode type", "enum": ["execve", "reverse_shell", "bind_shell", "read_flag"], "default": "execve"}
-                },
-                "required": []
-            }
-        ),
-        Tool(
-            name="pwn_pattern_create",
-            description="Create cyclic pattern for buffer overflow",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "length": {"type": "integer", "description": "Pattern length", "default": 100}
-                },
-                "required": []
-            }
-        ),
-        Tool(
-            name="pwn_pattern_offset",
-            description="Find offset in cyclic pattern",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "value": {"type": "string", "description": "Value to find (hex or string)"}
-                },
-                "required": ["value"]
-            }
-        ),
-        Tool(
-            name="pwn_rop_gadgets",
-            description="Common ROP gadget patterns",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "arch": {"type": "string", "description": "Architecture", "enum": ["x86", "x64"], "default": "x64"},
-                    "gadget_type": {"type": "string", "description": "Gadget type", "enum": ["pop_rdi", "pop_rsi", "pop_rdx", "syscall", "ret", "all"], "default": "all"}
-                },
-                "required": []
-            }
-        ),
-        Tool(
-            name="pwn_format_string",
-            description="Generate format string exploit payload",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "target_addr": {"type": "string", "description": "Target address to write (hex)"},
-                    "value": {"type": "string", "description": "Value to write (hex)"},
-                    "offset": {"type": "integer", "description": "Format string offset"},
-                    "arch": {"type": "string", "description": "Architecture", "enum": ["x86", "x64"], "default": "x64"}
-                },
-                "required": ["target_addr", "value", "offset"]
-            }
-        ),
-        Tool(
-            name="pwn_libc_offset",
-            description="Calculate libc base from leaked address",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "leaked_addr": {"type": "string", "description": "Leaked address (hex)"},
-                    "symbol": {"type": "string", "description": "Symbol name (e.g., puts, printf)"},
-                    "libc_version": {"type": "string", "description": "Libc version hint", "default": "2.31"}
-                },
-                "required": ["leaked_addr", "symbol"]
-            }
-        ),
-    ])
-
-    # Reverse tools
-    tools.extend([
-        Tool(
-            name="reverse_disasm",
-            description="Disassemble hex-encoded machine code",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "code": {"type": "string", "description": "Hex-encoded machine code"},
-                    "arch": {"type": "string", "description": "Architecture", "enum": ["x86", "x64", "arm", "arm64"], "default": "x64"}
-                },
-                "required": ["code"]
-            }
-        ),
-        Tool(
-            name="reverse_asm",
-            description="Assemble instructions to machine code",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "instructions": {"type": "string", "description": "Assembly instructions (one per line)"},
-                    "arch": {"type": "string", "description": "Architecture", "enum": ["x86", "x64", "arm", "arm64"], "default": "x64"}
-                },
-                "required": ["instructions"]
-            }
-        ),
-        Tool(
-            name="reverse_elf_info",
-            description="Parse ELF file header information",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string", "description": "Path to ELF file"}
-                },
-                "required": ["file_path"]
-            }
-        ),
-        Tool(
-            name="reverse_pe_info",
-            description="Parse PE file header information",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string", "description": "Path to PE file"}
-                },
-                "required": ["file_path"]
-            }
-        ),
-        Tool(
-            name="reverse_deobfuscate",
-            description="Attempt to deobfuscate simple obfuscation",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "code": {"type": "string", "description": "Obfuscated code or data"},
-                    "type": {"type": "string", "description": "Obfuscation type", "enum": ["xor", "base64", "rot13", "auto"], "default": "auto"}
-                },
-                "required": ["code"]
-            }
-        ),
-    ])
-
-    return tools
+    """List all available CTF tools dynamically"""
+    return list(TOOL_SCHEMAS.values())
 
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Handle tool calls"""
     try:
+        # Handle orchestrator tools
+        if name == "auto_solve":
+            return await _handle_auto_solve(arguments)
+        elif name == "classify_challenge":
+            return await _handle_classify(arguments)
+
         # Dynamic tool dispatch using registry
         if name not in TOOL_REGISTRY:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
@@ -588,17 +296,62 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         # Get module and method name from registry
         module, method_name = TOOL_REGISTRY[name]
 
+        # Guard against None module (orchestrator tools that weren't handled above)
+        if module is None:
+            return [TextContent(type="text", text=f"Tool {name} not properly configured")]
+
         # Get the actual method using getattr
         method = getattr(module, method_name)
 
-        # Call the method with arguments
+        # Call the method with arguments, handling async methods
         result = method(**arguments)
+
+        # Handle async tool handlers
+        if inspect.iscoroutine(result):
+            result = await result
 
         return [TextContent(type="text", text=str(result))]
 
+    except TypeError as e:
+        logger.error("Tool %s argument error: %s", name, e)
+        return [TextContent(type="text", text=f"Argument error: {str(e)}")]
     except Exception as e:
-        logger.error(f"Tool {name} failed: {e}")
+        logger.error("Tool %s failed: %s", name, e)
         return [TextContent(type="text", text=f"Error: {str(e)}")]
+
+
+async def _handle_auto_solve(arguments: dict) -> list[TextContent]:
+    """Handle auto_solve tool call"""
+    challenge = Challenge(
+        name=arguments.get("name", "unknown"),
+        description=arguments.get("description", ""),
+        files=arguments.get("files", []),
+        remote=arguments.get("remote") or None,
+        flag_format=arguments.get("flag_format", r"flag\{[^}]+\}"),
+        category_hint=arguments.get("category") or None,
+    )
+
+    timeout = arguments.get("timeout", 300)
+    orchestrator = CTFOrchestrator(timeout=timeout)
+    result = await orchestrator.solve(challenge)
+
+    output = json.dumps(result.to_dict(), indent=2, ensure_ascii=False)
+    return [TextContent(type="text", text=output)]
+
+
+async def _handle_classify(arguments: dict) -> list[TextContent]:
+    """Handle classify_challenge tool call"""
+    from .core.classifier import ChallengeClassifier
+
+    classifier = ChallengeClassifier()
+    result = classifier.classify(
+        description=arguments.get("description", ""),
+        files=arguments.get("files", []),
+        remote=arguments.get("remote") or None,
+    )
+
+    output = json.dumps(result.to_dict(), indent=2, ensure_ascii=False)
+    return [TextContent(type="text", text=output)]
 
 
 def main():

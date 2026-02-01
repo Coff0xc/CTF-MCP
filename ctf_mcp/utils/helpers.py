@@ -19,15 +19,52 @@ def to_str(data: Union[str, bytes], encoding: str = "utf-8") -> str:
     return data.decode(encoding)
 
 
+def clean_hex(hex_str: str) -> str:
+    """
+    Clean hex string by removing common prefixes and whitespace.
+    Handles: spaces, '0x', '\\x', '0X', newlines
+    """
+    return (
+        hex_str.replace(" ", "")
+        .replace("\n", "")
+        .replace("\t", "")
+        .replace("0x", "")
+        .replace("0X", "")
+        .replace("\\x", "")
+    )
+
+
 def hex_to_bytes(hex_str: str) -> bytes:
-    """Convert hex string to bytes"""
-    hex_str = hex_str.replace(" ", "").replace("0x", "").replace("\\x", "")
-    return bytes.fromhex(hex_str)
+    """Convert hex string to bytes, auto-cleaning common formats"""
+    return bytes.fromhex(clean_hex(hex_str))
+
+
+def hex_to_bytes_safe(hex_str: str) -> tuple[bytes | None, str | None]:
+    """
+    Safe hex to bytes conversion with error handling.
+    Returns (bytes, None) on success, (None, error_message) on failure.
+    """
+    try:
+        return bytes.fromhex(clean_hex(hex_str)), None
+    except ValueError as e:
+        return None, f"Invalid hex string: {e}"
 
 
 def bytes_to_hex(data: bytes, prefix: str = "") -> str:
     """Convert bytes to hex string"""
     return prefix + data.hex()
+
+
+def int_to_bytes(n: int, length: int | None = None, byteorder: str = "big") -> bytes:
+    """
+    Convert integer to bytes.
+    If length is None, uses minimum required bytes.
+    """
+    if n == 0:
+        return b"\x00" if length is None else b"\x00" * length
+    if length is None:
+        length = (n.bit_length() + 7) // 8
+    return n.to_bytes(length, byteorder=byteorder)
 
 
 def b64_encode(data: Union[str, bytes]) -> str:

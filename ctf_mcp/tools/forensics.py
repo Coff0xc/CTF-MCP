@@ -6,6 +6,8 @@ File analysis, steganography, and digital forensics tools
 import struct
 from typing import Optional
 
+from ..utils.helpers import clean_hex
+
 # Try to import optional dependencies
 try:
     from PIL import Image
@@ -46,15 +48,16 @@ class ForensicsTools:
         b'\x1a\x45\xdf\xa3': 'MKV/WebM Video',
     }
 
-    def get_tools(self) -> dict:
+    def get_tools(self) -> dict[str, str]:
         """Return available tools and their descriptions"""
         return {
-            "file_magic": "Identify file type",
-            "exif_extract": "Extract EXIF metadata",
-            "steghide_detect": "Detect steganography",
-            "lsb_extract": "Extract LSB data",
+            "file_magic": "Identify file type by magic bytes",
+            "exif_extract": "Extract EXIF metadata from image",
+            "steghide_detect": "Detect potential steganography in image",
+            "lsb_extract": "Extract LSB hidden data from image",
             "strings_file": "Extract strings from file",
-            "binwalk_scan": "Scan for embedded files",
+            "binwalk_scan": "Scan for embedded files and data",
+            "hex_dump": "Generate hex dump of file",
         }
 
     # === File Type Detection ===
@@ -63,8 +66,8 @@ class ForensicsTools:
         """Identify file type by magic bytes"""
         try:
             # Handle hex string input
-            header_bytes = bytes.fromhex(data.replace(" ", "").replace("\\x", "")[:64])
-        except:
+            header_bytes = bytes.fromhex(clean_hex(data)[:64])
+        except ValueError:
             return "Invalid hex data"
 
         result = ["File Type Detection:", "-" * 50]
