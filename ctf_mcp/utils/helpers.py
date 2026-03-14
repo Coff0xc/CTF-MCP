@@ -108,3 +108,40 @@ def find_flag(text: str, prefix: str = "flag") -> list[str]:
     for pattern in patterns:
         flags.extend(re.findall(pattern, text, re.IGNORECASE))
     return list(set(flags))
+
+
+def integer_nth_root(n: int, k: int) -> tuple[int, bool]:
+    """
+    Compute the integer k-th root of n using Newton's method.
+
+    Returns:
+        (root, exact) where exact is True if root**k == n
+    """
+    if n < 0:
+        raise ValueError("n must be non-negative")
+    if k < 1:
+        raise ValueError("k must be positive")
+    if n == 0:
+        return 0, True
+    if k == 1:
+        return n, True
+
+    # Initial guess using bit length
+    bit_len = n.bit_length()
+    guess = 1 << ((bit_len + k - 1) // k)
+
+    # Newton's iteration: x_{n+1} = ((k-1)*x_n + n // x_n^(k-1)) // k
+    while True:
+        guess_pow = guess ** (k - 1)
+        next_guess = ((k - 1) * guess + n // guess_pow) // k
+        if next_guess >= guess:
+            break
+        guess = next_guess
+
+    # Check exact match and neighbors
+    if guess ** k == n:
+        return guess, True
+    if (guess + 1) ** k == n:
+        return guess + 1, True
+    # Return floor root
+    return guess, False

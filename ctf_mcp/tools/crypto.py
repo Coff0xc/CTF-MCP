@@ -13,7 +13,7 @@ from typing import Union, List, Tuple, Optional
 from math import gcd, isqrt, log2
 
 from ..utils.security import dangerous_operation, RiskLevel
-from ..utils.helpers import rot_n as _rot_n, hex_to_bytes as _hex_to_bytes, clean_hex
+from ..utils.helpers import rot_n as _rot_n, hex_to_bytes as _hex_to_bytes, clean_hex, integer_nth_root
 
 # Try to import optional crypto libraries
 try:
@@ -1217,13 +1217,21 @@ class CryptoTools:
                     pass
                 return '\n'.join(results)
         else:
-            # Basic integer root
-            m = int(m_e ** (1/e))
-            for delta in range(-2, 3):
-                if (m + delta) ** e == m_e:
-                    results.append("[!] Attack successful!")
-                    results.append(f"m = {m + delta}")
-                    return '\n'.join(results)
+            # Pure-Python integer root via Newton's method
+            m, exact = integer_nth_root(m_e, e)
+            if exact:
+                results.append("[!] Attack successful!")
+                results.append(f"m = {m}")
+
+                try:
+                    hex_str = hex(m)[2:]
+                    if len(hex_str) % 2:
+                        hex_str = '0' + hex_str
+                    plaintext = bytes.fromhex(hex_str)
+                    results.append(f"Plaintext: {plaintext.decode('utf-8', errors='replace')}")
+                except (ValueError, UnicodeDecodeError):
+                    pass
+                return '\n'.join(results)
 
         results.append("[-] Could not find exact e-th root")
         return '\n'.join(results)
@@ -1253,6 +1261,22 @@ class CryptoTools:
                         if len(hex_str) % 2:
                             hex_str = '0' + hex_str
                         plaintext = bytes.fromhex(hex_str)
+                    results.append(f"Plaintext: {plaintext.decode('utf-8', errors='replace')}")
+                except (ValueError, UnicodeDecodeError):
+                    pass
+                return '\n'.join(results)
+        else:
+            # Pure-Python fallback
+            m, exact = integer_nth_root(c, e)
+            if exact:
+                results.append("[!] Attack successful! (m^e < n)")
+                results.append(f"m = {m}")
+
+                try:
+                    hex_str = hex(m)[2:]
+                    if len(hex_str) % 2:
+                        hex_str = '0' + hex_str
+                    plaintext = bytes.fromhex(hex_str)
                     results.append(f"Plaintext: {plaintext.decode('utf-8', errors='replace')}")
                 except (ValueError, UnicodeDecodeError):
                     pass
@@ -1515,7 +1539,7 @@ class CryptoTools:
         entropy_val = -sum((count / length) * log2(count / length)
                        for count in freq.values())
 
-        max_entropy = math.log2(len(freq)) if len(freq) > 1 else 1
+        max_entropy = log2(len(freq)) if len(freq) > 1 else 1
 
         results = [
             "Entropy Analysis:",

@@ -6,7 +6,6 @@ Encoding conversions, string operations, and utility tools
 import re
 import string
 import urllib.parse
-from typing import Optional
 
 from ..utils.helpers import clean_hex, hex_to_bytes as _hex_to_bytes
 
@@ -38,14 +37,9 @@ class MiscTools:
             "to_leetspeak": "Convert text to leetspeak",
             # Encoding Detection
             "detect_encoding": "Detect encoding type of data",
-            # Math Operations
+            # Math Operations (mod_inverse/CRT -> use crypto module)
             "gcd": "Calculate Greatest Common Divisor",
             "lcm": "Calculate Least Common Multiple",
-            "mod_inverse": "Calculate modular inverse",
-            "chinese_remainder_theorem": "Solve CRT system of congruences",
-            # Morse Code
-            "morse_encode": "Encode text to Morse code",
-            "morse_decode": "Decode Morse code to text",
         }
 
     # === Hex Encoding ===
@@ -245,39 +239,6 @@ class MiscTools:
         """Calculate LCM"""
         return abs(a * b) // self.gcd(a, b)
 
-    def mod_inverse(self, a: int, m: int) -> str:
-        """Calculate modular inverse"""
-        try:
-            result = pow(a, -1, m)
-            return f"{a}^(-1) mod {m} = {result}"
-        except ValueError:
-            return f"No modular inverse exists for {a} mod {m}"
-
-    def chinese_remainder_theorem(self, remainders: list, moduli: list) -> str:
-        """Solve system of congruences using CRT"""
-        if len(remainders) != len(moduli):
-            return "Error: remainders and moduli must have same length"
-
-        # Check pairwise coprime
-        from math import gcd
-        for i in range(len(moduli)):
-            for j in range(i + 1, len(moduli)):
-                if gcd(moduli[i], moduli[j]) != 1:
-                    return f"Error: {moduli[i]} and {moduli[j]} are not coprime"
-
-        M = 1
-        for m in moduli:
-            M *= m
-
-        result = 0
-        for a, m in zip(remainders, moduli):
-            Mi = M // m
-            yi = pow(Mi, -1, m)
-            result += a * Mi * yi
-
-        result = result % M
-        return f"Solution: x ≡ {result} (mod {M})"
-
     # === Text Manipulation ===
 
     def reverse_string(self, text: str) -> str:
@@ -303,30 +264,3 @@ class MiscTools:
         """Convert to leetspeak"""
         leet = {'a': '4', 'e': '3', 'i': '1', 'o': '0', 's': '5', 't': '7', 'l': '1'}
         return ''.join(leet.get(c.lower(), c) for c in text)
-
-    # === Morse Code ===
-
-    MORSE_CODE = {
-        'A': '.-', 'B': '-...', 'C': '-.-.', 'D': '-..', 'E': '.', 'F': '..-.',
-        'G': '--.', 'H': '....', 'I': '..', 'J': '.---', 'K': '-.-', 'L': '.-..',
-        'M': '--', 'N': '-.', 'O': '---', 'P': '.--.', 'Q': '--.-', 'R': '.-.',
-        'S': '...', 'T': '-', 'U': '..-', 'V': '...-', 'W': '.--', 'X': '-..-',
-        'Y': '-.--', 'Z': '--..',
-        '0': '-----', '1': '.----', '2': '..---', '3': '...--', '4': '....-',
-        '5': '.....', '6': '-....', '7': '--...', '8': '---..', '9': '----.',
-        ' ': '/'
-    }
-
-    def morse_encode(self, text: str) -> str:
-        """Encode text to Morse code"""
-        return ' '.join(self.MORSE_CODE.get(c.upper(), c) for c in text)
-
-    def morse_decode(self, morse: str) -> str:
-        """Decode Morse code to text"""
-        reverse_morse = {v: k for k, v in self.MORSE_CODE.items()}
-        words = morse.split(' / ')
-        result = []
-        for word in words:
-            chars = word.split(' ')
-            result.append(''.join(reverse_morse.get(c, c) for c in chars))
-        return ' '.join(result)

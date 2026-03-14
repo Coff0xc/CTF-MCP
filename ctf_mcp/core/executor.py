@@ -442,14 +442,129 @@ class StrategyExecutor:
         step: StrategyStep,
         context: dict[str, Any],
     ) -> str:
-        """Handle remote interaction (placeholder)"""
-        # This would be implemented with pwntools remote/ssh
-        # For now, return placeholder
+        """
+        Handle remote interaction with HTTP or TCP targets.
+
+        Supports:
+        - HTTP/HTTPS URLs: sends GET/POST requests via httpx or urllib
+        - host:port TCP targets: connects and sends/receives data via socket
+        """
         remote = context.get("remote")
         if not remote:
             return "No remote endpoint specified"
 
-        return f"Remote interaction with {remote} - requires implementation"
+        params = self._resolve_params(step.params, context)
+        results = []
+
+        # Determine if HTTP or TCP
+        if remote.startswith("http://") or remote.startswith("https://"):
+            results.append(f"[*] HTTP target: {remote}")
+            result = await self._http_interaction(remote, params)
+            results.append(result)
+        else:
+            # Assume host:port TCP
+            results.append(f"[*] TCP target: {remote}")
+            result = await self._tcp_interaction(remote, params)
+            results.append(result)
+
+        output = "\n".join(results)
+        # Store in context for subsequent steps
+        context["remote_output"] = output
+        return output
+
+    async def _http_interaction(
+        self,
+        url: str,
+        params: dict[str, Any],
+    ) -> str:
+        """Send HTTP request and return response"""
+        method = params.get("method", "GET").upper()
+        data = params.get("data")
+        headers = params.get("headers", {})
+
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                if method == "POST":
+                    resp = await client.post(url, data=data, headers=headers)
+                else:
+                    resp = await client.get(url, params=data, headers=headers)
+                body = resp.text[:5000]
+                return f"Status: {resp.status_code}\nHeaders: {dict(resp.headers)}\nBody:\n{body}"
+        except ImportError:
+            # Fallback to urllib
+            import urllib.request
+            import urllib.error
+
+            def _sync_request():
+                req = urllib.request.Request(url, headers=headers or {})
+                if method == "POST" and data:
+                    req.data = data.encode() if isinstance(data, str) else data
+                try:
+                    with urllib.request.urlopen(req, timeout=30) as resp:
+                        body = resp.read(5000).decode("utf-8", errors="replace")
+                        return f"Status: {resp.status}\nBody:\n{body}"
+                except urllib.error.HTTPError as e:
+                    body = e.read(5000).decode("utf-8", errors="replace")
+                    return f"HTTP Error {e.code}:\n{body}"
+
+            return await asyncio.to_thread(_sync_request)
+        except Exception as e:
+            return f"HTTP request failed: {e}"
+
+    async def _tcp_interaction(
+        self,
+        target: str,
+        params: dict[str, Any],
+    ) -> str:
+        """Connect to TCP target, send data, receive response"""
+        import socket
+
+        parts = target.split(":")
+        if len(parts) != 2:
+            return f"Invalid TCP target format: {target} (expected host:port)"
+
+        host, port_str = parts
+        try:
+            port = int(port_str)
+        except ValueError:
+            return f"Invalid port: {port_str}"
+
+        send_data = params.get("send", params.get("data", ""))
+
+        def _sync_tcp():
+            try:
+                with socket.create_connection((host, port), timeout=10) as sock:
+                    # Receive banner
+                    sock.settimeout(3)
+                    banner = b""
+                    try:
+                        banner = sock.recv(4096)
+                    except socket.timeout:
+                        pass
+
+                    # Send data if provided
+                    response = b""
+                    if send_data:
+                        payload = send_data.encode() if isinstance(send_data, str) else send_data
+                        if not payload.endswith(b"\n"):
+                            payload += b"\n"
+                        sock.sendall(payload)
+                        try:
+                            response = sock.recv(4096)
+                        except socket.timeout:
+                            pass
+
+                    output_parts = []
+                    if banner:
+                        output_parts.append(f"Banner: {banner.decode('utf-8', errors='replace')}")
+                    if response:
+                        output_parts.append(f"Response: {response.decode('utf-8', errors='replace')}")
+                    return "\n".join(output_parts) if output_parts else "Connected but no data received"
+            except Exception as e:
+                return f"TCP connection failed: {e}"
+
+        return await asyncio.to_thread(_sync_tcp)
 
     def _resolve_params(
         self,
@@ -458,6 +573,7 @@ class StrategyExecutor:
     ) -> dict[str, Any]:
         """Resolve parameter placeholders from context"""
         resolved = {}
+        unresolved = []
 
         for key, value in params.items():
             if isinstance(value, str) and value.startswith("{") and value.endswith("}"):
@@ -465,10 +581,17 @@ class StrategyExecutor:
                 if var_name in context:
                     resolved[key] = context[var_name]
                 else:
-                    # Keep original if not found
-                    resolved[key] = value
+                    # Log unresolved and skip — don't pass literal "{var}" to tools
+                    unresolved.append(f"{key}={value}")
             else:
                 resolved[key] = value
+
+        if unresolved:
+            logger.warning(
+                "Unresolved params (skipped): %s. Available context keys: %s",
+                ", ".join(unresolved),
+                list(context.keys()),
+            )
 
         return resolved
 
@@ -500,7 +623,7 @@ class StrategyExecutor:
     ) -> bool:
         """Check if execution can continue after a step failure"""
         # Check if any remaining steps don't depend on failed step
-        for i, step in enumerate(strategy.steps[failed_index + 1:], failed_index + 1):
+        for step in strategy.steps[failed_index + 1:]:
             if failed_index not in step.depends_on:
                 return True
         return False

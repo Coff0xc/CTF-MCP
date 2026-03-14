@@ -123,11 +123,6 @@ class TestMathUtils:
         result = misc_tools.lcm(12, 18)
         assert result == 36
 
-    def test_mod_inverse(self, misc_tools):
-        """Test modular inverse"""
-        result = misc_tools.mod_inverse(3, 11)
-        assert "inverse" in result.lower() or "4" in result
-
 
 class TestStringManipulation:
     """Test string manipulation utilities"""

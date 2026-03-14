@@ -6,7 +6,6 @@ Disassembly, file analysis, and deobfuscation tools
 import base64
 import string
 import struct
-from typing import Optional
 
 from ..utils.security import dangerous_operation, RiskLevel
 from ..utils.helpers import hex_to_bytes as _hex_to_bytes, clean_hex
@@ -32,6 +31,9 @@ class ReverseTools:
             "deobfuscate": "Deobfuscate code",
             "find_strings": "Extract printable strings from binary file",
             "find_gadgets_in_hex": "Find common ROP gadgets in hex data",
+            "checksec": "Check ELF binary security features (NX, PIE, RELRO, Canary)",
+            "elf_sections": "List ELF section headers with attributes",
+            "elf_symbols": "Extract symbol table entries from ELF",
         }
 
     # === Disassembly ===
@@ -407,3 +409,282 @@ class ReverseTools:
             result.append("  No gadgets found")
 
         return '\n'.join(result)
+
+    # === Security Feature Detection ===
+
+    def checksec(self, file_path: str) -> str:
+        """Check ELF binary security features (NX, PIE, RELRO, Canary)"""
+        try:
+            with open(file_path, 'rb') as f:
+                magic = f.read(4)
+                if magic != b'\x7fELF':
+                    return "Not an ELF file"
+                data = magic + f.read()
+
+            result = ["Security Features (checksec):", "-" * 50]
+
+            ei_class = data[4]
+            is64 = ei_class == 2
+            fmt = '<' if data[5] == 1 else '>'
+
+            if is64:
+                e_type = struct.unpack(fmt + 'H', data[16:18])[0]
+                e_phoff = struct.unpack(fmt + 'Q', data[32:40])[0]
+                e_phentsize = struct.unpack(fmt + 'H', data[54:56])[0]
+                e_phnum = struct.unpack(fmt + 'H', data[56:58])[0]
+            else:
+                e_type = struct.unpack(fmt + 'H', data[16:18])[0]
+                e_phoff = struct.unpack(fmt + 'I', data[28:32])[0]
+                e_phentsize = struct.unpack(fmt + 'H', data[42:44])[0]
+                e_phnum = struct.unpack(fmt + 'H', data[44:46])[0]
+
+            # PIE
+            result.append(f"  PIE:    {'Enabled' if e_type == 3 else 'Disabled'}")
+
+            # Scan program headers
+            PT_GNU_STACK = 0x6474e551
+            PT_GNU_RELRO = 0x6474e552
+            PT_DYNAMIC = 2
+            has_relro = False
+            nx_enabled = False
+            dyn_offset = dyn_size = 0
+
+            for i in range(e_phnum):
+                off = e_phoff + i * e_phentsize
+                p_type = struct.unpack(fmt + 'I', data[off:off+4])[0]
+                if is64:
+                    p_flags = struct.unpack(fmt + 'I', data[off+4:off+8])[0]
+                else:
+                    p_flags = struct.unpack(fmt + 'I', data[off+24:off+28])[0]
+
+                if p_type == PT_GNU_STACK:
+                    nx_enabled = not (p_flags & 0x1)
+                elif p_type == PT_GNU_RELRO:
+                    has_relro = True
+                elif p_type == PT_DYNAMIC:
+                    if is64:
+                        dyn_offset = struct.unpack(fmt + 'Q', data[off+8:off+16])[0]
+                        dyn_size = struct.unpack(fmt + 'Q', data[off+32:off+40])[0]
+                    else:
+                        dyn_offset = struct.unpack(fmt + 'I', data[off+4:off+8])[0]
+                        dyn_size = struct.unpack(fmt + 'I', data[off+16:off+20])[0]
+
+            result.append(f"  NX:     {'Enabled' if nx_enabled else 'Disabled'}")
+
+            # RELRO + BIND_NOW check
+            if has_relro and dyn_size:
+                has_bind_now = False
+                entry_size = 16 if is64 else 8
+                doff = dyn_offset
+                while doff + entry_size <= dyn_offset + dyn_size:
+                    if is64:
+                        d_tag = struct.unpack(fmt + 'q', data[doff:doff+8])[0]
+                        d_val = struct.unpack(fmt + 'Q', data[doff+8:doff+16])[0]
+                    else:
+                        d_tag = struct.unpack(fmt + 'i', data[doff:doff+4])[0]
+                        d_val = struct.unpack(fmt + 'I', data[doff+4:doff+8])[0]
+                    if d_tag == 24 or (d_tag == 30 and d_val & 0x8):  # BIND_NOW / DF_BIND_NOW
+                        has_bind_now = True
+                    elif d_tag == 0:
+                        break
+                    doff += entry_size
+                result.append(f"  RELRO:  {'Full RELRO' if has_bind_now else 'Partial RELRO'}")
+            elif has_relro:
+                result.append("  RELRO:  Partial RELRO")
+            else:
+                result.append("  RELRO:  No RELRO")
+
+            result.append(f"  Canary: {'Found' if b'__stack_chk_fail' in data else 'Not found'}")
+            result.append(f"  FORTIFY:{'Found' if b'_chk@' in data else 'Not found'}")
+
+            return '\n'.join(result)
+
+        except FileNotFoundError:
+            return f"File not found: {file_path}"
+        except Exception as e:
+            return f"Error: {e}"
+
+    # === ELF Section Listing ===
+
+    def elf_sections(self, file_path: str) -> str:
+        """List ELF section headers with attributes"""
+        try:
+            with open(file_path, 'rb') as f:
+                data = f.read()
+
+            if data[:4] != b'\x7fELF':
+                return "Not an ELF file"
+
+            is64 = data[4] == 2
+            fmt = '<' if data[5] == 1 else '>'
+
+            if is64:
+                e_shoff = struct.unpack(fmt + 'Q', data[40:48])[0]
+                e_shentsize = struct.unpack(fmt + 'H', data[58:60])[0]
+                e_shnum = struct.unpack(fmt + 'H', data[60:62])[0]
+                e_shstrndx = struct.unpack(fmt + 'H', data[62:64])[0]
+            else:
+                e_shoff = struct.unpack(fmt + 'I', data[32:36])[0]
+                e_shentsize = struct.unpack(fmt + 'H', data[46:48])[0]
+                e_shnum = struct.unpack(fmt + 'H', data[48:50])[0]
+                e_shstrndx = struct.unpack(fmt + 'H', data[50:52])[0]
+
+            if e_shnum == 0:
+                return "No section headers"
+
+            strtab_off = e_shoff + e_shstrndx * e_shentsize
+            if is64:
+                str_offset = struct.unpack(fmt + 'Q', data[strtab_off+24:strtab_off+32])[0]
+                str_size = struct.unpack(fmt + 'Q', data[strtab_off+32:strtab_off+40])[0]
+            else:
+                str_offset = struct.unpack(fmt + 'I', data[strtab_off+16:strtab_off+20])[0]
+                str_size = struct.unpack(fmt + 'I', data[strtab_off+20:strtab_off+24])[0]
+            strtab = data[str_offset:str_offset + str_size]
+
+            sh_types = {
+                0: 'NULL', 1: 'PROGBITS', 2: 'SYMTAB', 3: 'STRTAB',
+                4: 'RELA', 5: 'HASH', 6: 'DYNAMIC', 7: 'NOTE',
+                8: 'NOBITS', 9: 'REL', 11: 'DYNSYM',
+            }
+
+            result = ["ELF Sections:", "-" * 60]
+            result.append(f"{'#':<4} {'Name':<20} {'Type':<12} {'Size':<10} {'Flags'}")
+            result.append("-" * 60)
+
+            for i in range(e_shnum):
+                off = e_shoff + i * e_shentsize
+                if is64:
+                    sh_name = struct.unpack(fmt + 'I', data[off:off+4])[0]
+                    sh_type = struct.unpack(fmt + 'I', data[off+4:off+8])[0]
+                    sh_flags = struct.unpack(fmt + 'Q', data[off+8:off+16])[0]
+                    sh_size = struct.unpack(fmt + 'Q', data[off+32:off+40])[0]
+                else:
+                    sh_name = struct.unpack(fmt + 'I', data[off:off+4])[0]
+                    sh_type = struct.unpack(fmt + 'I', data[off+4:off+8])[0]
+                    sh_flags = struct.unpack(fmt + 'I', data[off+8:off+12])[0]
+                    sh_size = struct.unpack(fmt + 'I', data[off+20:off+24])[0]
+
+                name_end = strtab.find(b'\x00', sh_name)
+                name = strtab[sh_name:name_end].decode('ascii', errors='replace') if name_end > sh_name else ''
+                type_name = sh_types.get(sh_type, f'0x{sh_type:x}')
+                flags_str = ''
+                if sh_flags & 0x1: flags_str += 'W'
+                if sh_flags & 0x2: flags_str += 'A'
+                if sh_flags & 0x4: flags_str += 'X'
+
+                result.append(f"{i:<4} {name:<20} {type_name:<12} {sh_size:<10} {flags_str}")
+
+            return '\n'.join(result)
+
+        except FileNotFoundError:
+            return f"File not found: {file_path}"
+        except Exception as e:
+            return f"Error: {e}"
+
+    # === ELF Symbol Extraction ===
+
+    def elf_symbols(self, file_path: str, section: str = ".symtab") -> str:
+        """Extract symbol table entries from ELF binary"""
+        try:
+            with open(file_path, 'rb') as f:
+                data = f.read()
+
+            if data[:4] != b'\x7fELF':
+                return "Not an ELF file"
+
+            is64 = data[4] == 2
+            fmt = '<' if data[5] == 1 else '>'
+
+            if is64:
+                e_shoff = struct.unpack(fmt + 'Q', data[40:48])[0]
+                e_shentsize = struct.unpack(fmt + 'H', data[58:60])[0]
+                e_shnum = struct.unpack(fmt + 'H', data[60:62])[0]
+                e_shstrndx = struct.unpack(fmt + 'H', data[62:64])[0]
+            else:
+                e_shoff = struct.unpack(fmt + 'I', data[32:36])[0]
+                e_shentsize = struct.unpack(fmt + 'H', data[46:48])[0]
+                e_shnum = struct.unpack(fmt + 'H', data[48:50])[0]
+                e_shstrndx = struct.unpack(fmt + 'H', data[50:52])[0]
+
+            strtab_hdr = e_shoff + e_shstrndx * e_shentsize
+            if is64:
+                shstr_off = struct.unpack(fmt + 'Q', data[strtab_hdr+24:strtab_hdr+32])[0]
+                shstr_sz = struct.unpack(fmt + 'Q', data[strtab_hdr+32:strtab_hdr+40])[0]
+            else:
+                shstr_off = struct.unpack(fmt + 'I', data[strtab_hdr+16:strtab_hdr+20])[0]
+                shstr_sz = struct.unpack(fmt + 'I', data[strtab_hdr+20:strtab_hdr+24])[0]
+            shstrtab = data[shstr_off:shstr_off + shstr_sz]
+
+            # Find target section
+            sym_off = sym_size = sym_entsize = sym_link = 0
+            for i in range(e_shnum):
+                off = e_shoff + i * e_shentsize
+                sh_name_idx = struct.unpack(fmt + 'I', data[off:off+4])[0]
+                name_end = shstrtab.find(b'\x00', sh_name_idx)
+                name = shstrtab[sh_name_idx:name_end].decode('ascii', errors='replace') if name_end > sh_name_idx else ''
+                if name == section:
+                    if is64:
+                        sym_off = struct.unpack(fmt + 'Q', data[off+24:off+32])[0]
+                        sym_size = struct.unpack(fmt + 'Q', data[off+32:off+40])[0]
+                        sym_entsize = struct.unpack(fmt + 'Q', data[off+56:off+64])[0]
+                        sym_link = struct.unpack(fmt + 'I', data[off+40:off+44])[0]
+                    else:
+                        sym_off = struct.unpack(fmt + 'I', data[off+16:off+20])[0]
+                        sym_size = struct.unpack(fmt + 'I', data[off+20:off+24])[0]
+                        sym_entsize = struct.unpack(fmt + 'I', data[off+36:off+40])[0]
+                        sym_link = struct.unpack(fmt + 'I', data[off+28:off+32])[0]
+                    break
+
+            if sym_size == 0:
+                return f"Section '{section}' not found (try .dynsym)"
+
+            link_hdr = e_shoff + sym_link * e_shentsize
+            if is64:
+                str_off = struct.unpack(fmt + 'Q', data[link_hdr+24:link_hdr+32])[0]
+                str_sz = struct.unpack(fmt + 'Q', data[link_hdr+32:link_hdr+40])[0]
+            else:
+                str_off = struct.unpack(fmt + 'I', data[link_hdr+16:link_hdr+20])[0]
+                str_sz = struct.unpack(fmt + 'I', data[link_hdr+20:link_hdr+24])[0]
+            sym_strtab = data[str_off:str_off + str_sz]
+
+            bind_names = {0: 'LOCAL', 1: 'GLOBAL', 2: 'WEAK'}
+            type_names = {0: 'NOTYPE', 1: 'OBJECT', 2: 'FUNC', 3: 'SECTION', 4: 'FILE'}
+
+            result = [f"ELF Symbols ({section}):", "-" * 60]
+            num_syms = sym_size // sym_entsize if sym_entsize else 0
+            func_count = 0
+
+            for i in range(num_syms):
+                soff = sym_off + i * sym_entsize
+                if is64:
+                    st_name = struct.unpack(fmt + 'I', data[soff:soff+4])[0]
+                    st_info = data[soff + 4]
+                    st_value = struct.unpack(fmt + 'Q', data[soff+8:soff+16])[0]
+                    st_size = struct.unpack(fmt + 'Q', data[soff+16:soff+24])[0]
+                else:
+                    st_name = struct.unpack(fmt + 'I', data[soff:soff+4])[0]
+                    st_info = data[soff + 12]
+                    st_value = struct.unpack(fmt + 'I', data[soff+4:soff+8])[0]
+                    st_size = struct.unpack(fmt + 'I', data[soff+8:soff+12])[0]
+
+                st_bind = st_info >> 4
+                st_type = st_info & 0xf
+                name_end = sym_strtab.find(b'\x00', st_name)
+                name = sym_strtab[st_name:name_end].decode('ascii', errors='replace') if name_end > st_name else ''
+                if not name:
+                    continue
+                if st_type == 2:
+                    func_count += 1
+
+                result.append(
+                    f"  0x{st_value:016x}  {bind_names.get(st_bind, '?'):<7} "
+                    f"{type_names.get(st_type, '?'):<8} size={st_size:<6} {name}"
+                )
+
+            result.append(f"\nTotal named symbols: {num_syms}, functions: {func_count}")
+            return '\n'.join(result)
+
+        except FileNotFoundError:
+            return f"File not found: {file_path}"
+        except Exception as e:
+            return f"Error: {e}"

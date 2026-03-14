@@ -4,7 +4,11 @@ File analysis, steganography, and digital forensics tools
 """
 
 import struct
-from typing import Optional
+import zipfile
+import subprocess
+import shutil
+from math import log2
+from collections import Counter
 
 from ..utils.helpers import clean_hex
 
@@ -58,6 +62,9 @@ class ForensicsTools:
             "strings_file": "Extract strings from file",
             "binwalk_scan": "Scan for embedded files and data",
             "hex_dump": "Generate hex dump of file",
+            "entropy_analysis": "Calculate Shannon entropy to detect encryption/compression",
+            "png_chunks": "Parse PNG chunk structure for hidden data",
+            "zip_analysis": "Analyze ZIP archive contents and metadata",
         }
 
     # === File Type Detection ===
@@ -368,6 +375,19 @@ class ForensicsTools:
 
     def binwalk_scan(self, file_path: str) -> str:
         """Scan file for embedded files and data"""
+        # Try real binwalk first
+        if shutil.which("binwalk"):
+            try:
+                proc = subprocess.run(
+                    ["binwalk", file_path],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    return f"Binwalk Scan Results:\n{'-' * 50}\n{proc.stdout}"
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+
+        # Fallback: pure-Python signature scan
         try:
             with open(file_path, 'rb') as f:
                 data = f.read()
@@ -456,6 +476,199 @@ class ForensicsTools:
 
             return '\n'.join(result)
 
+        except FileNotFoundError:
+            return f"File not found: {file_path}"
+        except Exception as e:
+            return f"Error: {e}"
+
+    # === Entropy Analysis ===
+
+    def entropy_analysis(self, file_path: str, block_size: int = 256) -> str:
+        """Calculate Shannon entropy to detect encryption/compression/hidden data"""
+        try:
+            with open(file_path, 'rb') as f:
+                data = f.read()
+
+            total_len = len(data)
+            result = ["Entropy Analysis:", "-" * 50]
+            result.append(f"File size: {total_len} bytes")
+
+            freq = Counter(data)
+            overall = -sum(
+                (c / total_len) * log2(c / total_len) for c in freq.values()
+            )
+            result.append(f"Overall entropy: {overall:.4f} bits/byte (max 8.0)")
+
+            if overall > 7.9:
+                result.append("[!] Very high entropy — likely encrypted or compressed")
+            elif overall > 7.0:
+                result.append("[*] High entropy — possibly compressed data")
+            elif overall < 4.0:
+                result.append("[*] Low entropy — mostly text or sparse data")
+
+            if total_len > block_size * 4:
+                result.append("")
+                result.append(f"Block entropy (block={block_size} bytes):")
+                anomalies = []
+                prev_ent = None
+                for off in range(0, total_len - block_size + 1, block_size):
+                    blk = data[off:off + block_size]
+                    bf = Counter(blk)
+                    ent = -sum(
+                        (c / block_size) * log2(c / block_size)
+                        for c in bf.values()
+                    )
+                    if prev_ent is not None and abs(ent - prev_ent) > 2.0:
+                        anomalies.append((off, ent, prev_ent))
+                    prev_ent = ent
+
+                if anomalies:
+                    result.append("[!] Entropy anomalies (possible hidden boundaries):")
+                    for off, ent, prev in anomalies[:10]:
+                        result.append(
+                            f"  0x{off:08x}: {ent:.2f} (prev {prev:.2f}, "
+                            f"delta {abs(ent - prev):.2f})"
+                        )
+                else:
+                    result.append("  No significant entropy transitions detected")
+
+            return '\n'.join(result)
+
+        except FileNotFoundError:
+            return f"File not found: {file_path}"
+        except Exception as e:
+            return f"Error: {e}"
+
+    # === PNG Chunk Parsing ===
+
+    def png_chunks(self, file_path: str) -> str:
+        """Parse PNG chunk structure to find hidden or unusual chunks"""
+        try:
+            with open(file_path, 'rb') as f:
+                sig = f.read(8)
+                if sig != b'\x89PNG\r\n\x1a\n':
+                    return "Not a valid PNG file"
+
+                result = ["PNG Chunk Analysis:", "-" * 50]
+                critical = {'IHDR', 'PLTE', 'IDAT', 'IEND'}
+                standard = critical | {
+                    'cHRM', 'gAMA', 'iCCP', 'sBIT', 'sRGB', 'bKGD',
+                    'hIST', 'tRNS', 'pHYs', 'sPLT', 'tIME', 'iTXt',
+                    'tEXt', 'zTXt',
+                }
+                idx = 0
+                total_idat = 0
+
+                while True:
+                    raw = f.read(4)
+                    if len(raw) < 4:
+                        break
+                    length = struct.unpack('>I', raw)[0]
+                    chunk_type = f.read(4)
+                    if len(chunk_type) < 4:
+                        break
+                    ctype = chunk_type.decode('ascii', errors='replace')
+
+                    chunk_data = f.read(length) if length <= 65536 else b''
+                    if length > 65536:
+                        f.seek(length, 1)
+                    f.read(4)  # CRC
+
+                    marker = ""
+                    if ctype not in standard:
+                        marker = " [!] UNKNOWN/CUSTOM"
+                    elif ctype in critical:
+                        marker = " [CRITICAL]"
+
+                    line = f"  #{idx}: {ctype} length={length}{marker}"
+
+                    if ctype == 'IHDR' and len(chunk_data) >= 13:
+                        w = struct.unpack('>I', chunk_data[0:4])[0]
+                        h = struct.unpack('>I', chunk_data[4:8])[0]
+                        bd, ct = chunk_data[8], chunk_data[9]
+                        color_types = {
+                            0: 'Grayscale', 2: 'RGB', 3: 'Indexed',
+                            4: 'Grayscale+Alpha', 6: 'RGBA',
+                        }
+                        line += (
+                            f" ({w}x{h}, depth={bd}, "
+                            f"color={color_types.get(ct, ct)})"
+                        )
+                    elif ctype == 'tEXt' and chunk_data:
+                        parts = chunk_data.split(b'\x00', 1)
+                        key = parts[0].decode('latin-1', errors='replace')
+                        val = parts[1].decode('latin-1', errors='replace')[:80] if len(parts) > 1 else ''
+                        line += f' key="{key}" val="{val}"'
+                    elif ctype == 'IDAT':
+                        total_idat += length
+
+                    result.append(line)
+                    idx += 1
+
+                result.append(f"\nTotal IDAT data: {total_idat} bytes across chunks")
+                return '\n'.join(result)
+
+        except FileNotFoundError:
+            return f"File not found: {file_path}"
+        except Exception as e:
+            return f"Error parsing PNG: {e}"
+
+    # === ZIP Analysis ===
+
+    def zip_analysis(self, file_path: str) -> str:
+        """Analyze ZIP archive contents and metadata"""
+        try:
+            with zipfile.ZipFile(file_path, 'r') as zf:
+                result = ["ZIP Archive Analysis:", "-" * 50]
+                infos = zf.infolist()
+                result.append(f"Entries: {len(infos)}")
+
+                encrypted_count = 0
+                total_size = 0
+                total_compressed = 0
+
+                for info in infos:
+                    flags = []
+                    if info.flag_bits & 0x1:
+                        flags.append("ENCRYPTED")
+                        encrypted_count += 1
+                    ratio = ""
+                    if info.file_size > 0:
+                        r = info.compress_size / info.file_size * 100
+                        ratio = f" ({r:.0f}%)"
+                    total_size += info.file_size
+                    total_compressed += info.compress_size
+
+                    line = (
+                        f"  {info.filename}  "
+                        f"size={info.file_size}  "
+                        f"compressed={info.compress_size}{ratio}"
+                    )
+                    if flags:
+                        line += f"  [{', '.join(flags)}]"
+                    if info.comment:
+                        line += f"  comment={info.comment.decode('utf-8', errors='replace')}"
+                    result.append(line)
+
+                result.append("")
+                overall_ratio = ""
+                if total_size > 0:
+                    overall_ratio = f" ({total_compressed / total_size * 100:.1f}%)"
+                result.append(
+                    f"Total: {total_size} bytes -> "
+                    f"{total_compressed} compressed{overall_ratio}"
+                )
+                if encrypted_count:
+                    result.append(f"[!] {encrypted_count} encrypted entries detected")
+
+                comment = zf.comment
+                if comment:
+                    result.append(f"[!] Archive comment: {comment.decode('utf-8', errors='replace')}")
+
+                return '\n'.join(result)
+
+        except zipfile.BadZipFile:
+            return "Not a valid ZIP file"
         except FileNotFoundError:
             return f"File not found: {file_path}"
         except Exception as e:
